@@ -13,6 +13,6 @@ I used to work at **HackerRank** as a full stack developer. I had also setup web
 
 I like to keep up with shiny new tech and have dipped my toes in a wide range of technologies, including web programming, distributed algorithms, big data systems, VR frameworks, blockchain architectures, and machine learning concepts. 
 
-I love taking part in hackathons and dream of side projects becoming my day job someday. I've started this blog to measure my progress and keeping track of what I'm learning, be it engineering skills or MOOC notes or book summaries. 
+I love taking part in hackathons and dream of side projects becoming my day job someday. I've started this blog to measure my progress and keep track of what I'm learning, be it engineering skills or MOOC notes or book summaries. 
 
 Contact me at [siddharthasahai99@gmail.com](mailto:siddharthasahai99@gmail.com).
