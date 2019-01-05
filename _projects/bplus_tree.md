@@ -1,7 +1,8 @@
 ---
+layout: project
 name: B+ Tree
-img_url: 
-description: File-system based B+ tree
+proj_url: https://github.com/sidthekidder/btree-index
+img_url: /images/projects/btree.png
+description: Filesystem-based B+ tree index
 type: academic
 ---
-B+ tree content WIP
