@@ -283,7 +283,7 @@ nav {
   max-width: 820px;
 }
 
-.card_img {
+.card__img {
   visibility: hidden;
   background-size: cover;
   background-position: center;
@@ -294,7 +294,7 @@ nav {
   border-top-right-radius: 12px;
 }
 
-.card_info-hover {
+.card__info-hover {
   position: absolute;
   padding: 16px;
   width: 100%;
@@ -302,7 +302,7 @@ nav {
   top: 0;
 }
 
-.card_img-hover {
+.card__img--hover {
   transition: 0.2s all ease-out;
   background-size: cover;
   background-position: center;
@@ -331,14 +331,14 @@ nav {
   transform: scale(1.10, 1.10);
 }
 
-.card_info {
+.card__info {
   z-index: 2;
   border-bottom-left-radius: 12px;
   border-bottom-right-radius: 12px;
   padding: 6px 18px 6px 18px;
 }
 
-.card_category {
+.card__category {
   text-transform: uppercase;
   font-size: 13px;
   letter-spacing: 2px;
@@ -346,23 +346,23 @@ nav {
   color: #868686;
 }
 
-.card_title {
+.card__title {
   margin-top: 5px;
   margin-bottom: 10px;
   font-family: 'Roboto Slab', serif;
 }
 
-.card:hover .card_img_hover {
+.card:hover .card__img--hover {
   height: 100%;
   opacity: 0.3;
 }
 
-.card:hover .card_info {
+.card:hover .card__info {
   background-color: transparent;
   position: relative;
 }
 
-.card:hover .card_info-hover {
+.card:hover .card__info-hover {
   opacity: 1;
 }
 

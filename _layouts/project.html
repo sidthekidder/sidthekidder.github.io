@@ -14,11 +14,11 @@ layout: default
     	{% if project.type == 'academic' %}
 	    	<article class="card">
 		    	<a href="{{project.proj_url}}" target="_blank" class="card_link">
-					<div class="card_img"></div>
-					<div class="card_img-hover" style="background: url({{project.img_url}}) no-repeat; background-size: cover; background-position: center center;"></div>
-					<div class="card_info">
-						<span class="card_category">{{ project.name }}</span>
-						<h3 class="card_title">{{ project.description }}</h3>
+					<div class="card__img"></div>
+					<div class="card__img--hover" style="background: url({{project.img_url}}) no-repeat; background-size: cover; background-position: center center;"></div>
+					<div class="card__info">
+						<span class="card__category">{{ project.name }}</span>
+						<h3 class="card__title">{{ project.description }}</h3>
 					</div>
 				</a>
 			</article>
@@ -33,11 +33,11 @@ layout: default
 		{% if project.type == 'misc' %}
 	    	<article class="card">
 		    	<a href="{{project.proj_url}}" target="_blank" class="card_link">
-					<div class="card_img"></div>
-					<div class="card_img-hover" style="background: url({{project.img_url}}) no-repeat; background-size: cover; background-position: center center;"></div>
-					<div class="card_info">
-						<span class="card_category">{{ project.name }}</span>
-						<h3 class="card_title">{{ project.description }}</h3>
+					<div class="card__img"></div>
+					<div class="card__img--hover" style="background: url({{project.img_url}}) no-repeat; background-size: cover; background-position: center center;"></div>
+					<div class="card__info">
+						<span class="card__category">{{ project.name }}</span>
+						<h3 class="card__title">{{ project.description }}</h3>
 					</div>
 				</a>
 			</article>
