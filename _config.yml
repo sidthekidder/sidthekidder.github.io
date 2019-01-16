@@ -50,7 +50,10 @@ url: http://www.siddharthasahai.com
 baseurl: ""
 
 collections:
-  - projects
+  projects:
+    output: false
+  notes:
+    output: true
 
 #
 # !! You don't need to change any of the configuration flags below !!

@@ -1,0 +1,19 @@
+---
+layout: default
+---
+
+<article class="page">
+  <div class="entry">
+  	<h1>Online Courses</h1>
+  	{% for note in site.notes %}
+  		{% if note.type == 'mooc' %}
+		  <h2>
+		    <a href="{{ note.url }}">
+		      {{ note.title }}
+		    </a>
+		  	<span class="site-description"> {{ note.date | date: "%B %e, %Y" }}</span>
+		  </h2>
+		{% endif %}
+	{% endfor %}
+  </div>
+</article>
