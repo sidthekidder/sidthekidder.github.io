@@ -16,7 +16,7 @@ TLDR; Leetcoding helps programmers. Gymming helps bodybuilders. Deliberate pract
 
 **Caveats**: 
 
-This is not to say that every programmer MUST be a leetcode grinder - many people have learnt the same intuition/knowledge by working on their own projects. As a result, their mind has gotten sharp enough on their own. But that may be a more difficult way of going about the same thing, while the end result is the same - a disciplined and toned/stretched mind (the pleasure people derive from their own projects various of course).
+This is not to say that every programmer MUST be a leetcode grinder - many people have learnt the same intuition/knowledge by working on their own projects. As a result, their mind has gotten sharp enough on their own. But that may be a more difficult way of going about the same thing, while the end result is the same - a disciplined and toned/stretched mind (the pleasure people derive from their own projects varies, of course).
 
 Also, not every job needs the kind of skill gotten from leetcode grinding. A fullstack developer doesn't need to learn dynamic programming, just like a marathon runner doesn't need to be able to deadlift 200lbs. It would be a waste of time for the academic researcher or fullstack developer to flex their 'algorithmic thinking' muscles. As long as their 'muscles' are flexed by other means, they don't need leetcode. 
 
