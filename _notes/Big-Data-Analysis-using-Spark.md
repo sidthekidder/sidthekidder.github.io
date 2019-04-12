@@ -2,6 +2,7 @@
 layout: note
 name: Big Data Analysis using Spark
 type: mooc
+date: January 21, 2019
 ---
 
 **Aims** - 
