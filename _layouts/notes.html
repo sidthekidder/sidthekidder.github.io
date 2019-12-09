@@ -15,5 +15,17 @@ layout: default
 		  </h2>
 		{% endif %}
 	{% endfor %}
+
+  	<h1>Miscellaneous</h1>
+  	{% for note in site.notes %}
+  		{% if note.type == 'misc' %}
+		  <h2>
+		    <a href="{{ note.url }}">
+		      {{ note.title }}
+		    </a>
+		  	<span class="site-description"> {{ note.date | date: "%B %e, %Y" }}</span>
+		  </h2>
+		{% endif %}
+	{% endfor %}
   </div>
 </article>
