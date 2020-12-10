@@ -7,13 +7,10 @@ layout: default
   <h1>{{ page.title }}</h1>
 
   <div class="entry">
-  	<!-- Academic Projects -->
-  	<h2>Academic Projects</h2>
     <section class="cards">
     {% for project in site.projects %}
-    	{% if project.type == 'academic' %}
-	    	<article class="card">
-		    	<a href="{{project.proj_url}}" target="_blank" class="card_link">
+    	<article class="card">
+	    	<a href="{{project.proj_url}}" target="_blank" class="card_link">
 					<div class="card__img"></div>
 					<div class="card__img--hover" style="background: url({{project.img_url}}) no-repeat; background-size: cover; background-position: center center;"></div>
 					<div class="card__info">
@@ -22,26 +19,6 @@ layout: default
 					</div>
 				</a>
 			</article>
-		{% endif %}
-    {% endfor %}
-	</section>
-
-    <!-- Miscellaneous Projects -->
-    <h2>Miscellaneous Projects</h2>
-	<section class="cards">
-    {% for project in site.projects %}
-		{% if project.type == 'misc' %}
-	    	<article class="card">
-		    	<a href="{{project.proj_url}}" target="_blank" class="card_link">
-					<div class="card__img"></div>
-					<div class="card__img--hover" style="background: url({{project.img_url}}) no-repeat; background-size: cover; background-position: center center;"></div>
-					<div class="card__info">
-						<span class="card__category">{{ project.name }}</span>
-						<h3 class="card__title">{{ project.description }}</h3>
-					</div>
-				</a>
-			</article>
-		{% endif %}
     {% endfor %}
 	</section>
 
