@@ -1,8 +1,8 @@
 ---
 layout: post
 title: OpenStack Swift Setup
-date: December 9, 2019
 type: misc
+date: December 9, 2019
 ---
 
 Swift is the object storage service included in OpenStack's environment. To setup swift, you first need to setup the OpenStack environment and the Keystone Identity service.
