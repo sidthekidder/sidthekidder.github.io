@@ -27,7 +27,7 @@ Workflow:
 Contains a number of services, only for managing the cluster,  is replicated for availability.
 
 -   API server: external API, accepts YAML and auth checks
--   cluster store: stores configurations/YAMLs. Built on etcd (consistency more important than aailiability)
+-   cluster store: stores configurations/YAMLs. Built on etcd (consistency more important than availiability)
 -   controller manager: background control loops like node controller, endpoint controller etc - background watch loops that ensure current state == desired state
 -   scheduler: watches API for new work tasks and assigns them to healthy nodes. Filters and ranks the nodes
 
