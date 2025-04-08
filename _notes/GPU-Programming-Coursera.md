@@ -1,11 +1,11 @@
 ---
 layout: note
-name: GPU Programming Coursera
+name: Intro to GPU Programming 
 type: mooc
 date: March 31, 2025
 ---
 
-[Course 1 of the [GPU programming](https://www.coursera.org/specializations/gpu-programming) specialization on coursera]
+[Course 1 of the [GPU programming](https://www.coursera.org/specializations/gpu-programming) specialization on coursera by John Hopkins University]
 
 
 **Introduction to Parallel Programming with GPUs** - 
