@@ -2,7 +2,7 @@
 layout: note
 name: Intro to CUDA Programming 
 type: mooc
-date: March 31, 2025
+date: April 8, 2025
 ---
 
 [Course 2 of the [GPU programming](https://www.coursera.org/specializations/gpu-programming) specialization on coursera by John Hopkins University]
@@ -37,6 +37,7 @@ Mapping between hardware & software:
 ![cudavisualization](/images/notes/gpuprogramming/cudavisualization.png)
 
 **CUDA Kernel Execution:**
+````
 Func<<<Dg, Db, Ns, S>>>(parameter);
 ^ this describes how to break up the work done on the GPU.
 kernel<<<blocks, threads per block, shared_memory, stream_of_interactive_data>>>(args);
@@ -49,6 +50,8 @@ __ global __ void MatAdd(float MatA[][][], float MatB[][][], float MatC[][][])
         ...
 }
 
+````
+
 **Merge Sort algorithm: CPU -> GPU**
 ![bottomupmerge](/images/notes/gpuprogramming/bottomupmerge.png)
 
@@ -57,8 +60,9 @@ __ global __ void MatAdd(float MatA[][][], float MatB[][][], float MatC[][][])
 
 **CUDA Kernel Threads & Block syntax**
 
-1-dimensional layout: Kernel<<<blocks, threads_per_block>>>(parameters);
 
+1-dimensional layout: Kernel<<<blocks, threads_per_block>>>(parameters);
+````
 /# define N 1618
 ...
 add<<<1, 32>>>(a,b,c);
@@ -70,9 +74,10 @@ device code(kernel):
     c\[idx] = a\[idx] + b\[idx]
   }
 }
-
+````
 
 2-dim layout: kernel<<<grid, block>>>(parameters);
+````
 /# define N 512
 dim3 grid(1,1);
 dim3 block(32,32);
@@ -87,8 +92,11 @@ device code(kernel):
     c\[index] = a\[index] * b\[index]
   }
 }
+````
+
 
 3-dimensional layout: kernel<<<grid, block>>>(parameters);
+````
 /# define N 16
 dim3 grid(1, 1, 1);
 dim3 block(N, N, N);
@@ -102,7 +110,7 @@ device code(kernel)
     c\[index] = a\[index] - b\[index]
   }
 }
-
+````
 
 We could also go 2 - 6 dimensional similar to the above.
 [Explainer Link](https://www.eecs.umich.edu/courses/eecs498-APP/resources/materials/CUDA-Thread-Indexing-Cheatsheet.pdf)
