@@ -7,10 +7,12 @@ published: true
 
 Hi!
 
-I currently work as a ML engineer at Twitter cortex. I graduated with a masters degree from the University of Texas at Dallas, majoring in Data Science. 
+I'm a Senior ML Engineer at **Adobe**, working on the AEP AI platform — building LLM assistants, agentic orchestration, RAG pipelines, and eval/regression infrastructure.
 
-I previously used to work at **HackerRank** as a full stack developer. I've also worked on web wallets & solidity contracts for **Zilliqa**, an innovative blockchain and smart contract platform. I received my undergraduate degree in 2016 from **BITS Pilani**.
+Before Adobe I spent three years at **Twitter** on the ML inference platform — a serving system that handled 500+ models at 5M+ QPS. I worked on integrating TensorFlow Serving, KFServing/KServe, and NVIDIA Triton.
 
-I like to keep up with shiny new tech and have dipped my toes in a wide range of technologies, including the web, distributed algorithms, big data systems, VR frameworks, blockchain architectures, machine learning, natural language processing and deep neural networks & federated learning. I'm also interested in entrepreneurship and startups, and love playing music when I get saturated of the tech world.
+Earlier I was a backend engineer at **HackerRank**. I've also worked on web wallets & solidity contracts for **Zilliqa**, an innovative blockchain and smart contract platform. I received my undergrad from **BITS Pilani** and my MS in Computer Science from **UT Dallas**.
 
-I've started this blog to keep track of things I've learnt, both technical or personal. Email me with any questions or just to say hi at [siddharthasahai99@gmail.com](mailto:siddharthasahai99@gmail.com).
+Outside of work I play music, follow the startup world, and write here occasionally.
+
+Email me at [siddharthasahai99@gmail.com](mailto:siddharthasahai99@gmail.com) or find me on [GitHub](https://github.com/sidthekidder).
