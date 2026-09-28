@@ -1,8 +1,8 @@
 ---
 layout: project
-name: Whatsapp Wrapped - whatsapp chat analyzer
-proj_url: https://github.com/sidthekidder/wapwrap
+name: Chatalyze — WhatsApp chat analyzer
+proj_url: https://github.com/sidthekidder/chatalyze
 img_url: /images/projects/wapwrap.png
-description: WhatsApp chat analyzer — uploads a chat log and generates a PDF report with message frequency, wordcloud, topic modelling, emoji and sentiment analysis. Java Spring API + BentoML sentiment service (DistilBERT) deployed on Kubernetes.
+description: Psychologically-grounded WhatsApp chat analyzer. Detects cognitive distortions, emotional labor imbalance, pronoun fingerprints, and relationship trajectory. LLM coaching report addresses each person by name with evidence from their actual messages.
 type: misc
 ---
