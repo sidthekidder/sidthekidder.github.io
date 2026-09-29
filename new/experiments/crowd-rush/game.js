@@ -137,13 +137,20 @@ if (!canUseWebGL()) {
     return Math.min(crowdRadius(count), 1.3);
   }
 
-  // Lays the crowd out in clean concentric rings (a stable circle) around
-  // its centroid, then layers a per-instance sine wobble/bob/lean on top —
-  // each figure gently drifts in and out and bounces as it "runs", giving
-  // the mass a soft, fluid look instead of rigid fixed points, while the
-  // ring structure itself always stays circular.
-  function layoutFormation(mesh, count, centerX, centerZ, facingAngle) {
+  // Lays the crowd out as a blend of two formations, controlled by
+  // moveBlend (0 = fully gathered, 1 = fully moving):
+  //   - circle: concentric rings around the centroid (idle, "gathered")
+  //   - trail: a wedge fanning out BEHIND the facing direction, with the
+  //     very first instance (ring 0) sitting right at the crowd's actual
+  //     position — the leader everyone else trails.
+  // A per-instance sine wobble/bob/lean rides on top of either formation
+  // for a soft, alive, flowing look rather than rigid fixed points.
+  function layoutFormation(mesh, count, centerX, centerZ, facingAngle, moveBlend) {
     const dummy = new THREE.Object3D();
+    const forwardX = Math.sin(facingAngle);
+    const forwardZ = Math.cos(facingAngle);
+    const rightX = Math.cos(facingAngle);
+    const rightZ = -Math.sin(facingAngle);
     let placed = 0;
     let ring = 0;
     while (placed < count) {
@@ -155,8 +162,18 @@ if (!canUseWebGL()) {
         const wobble = Math.sin(elapsedTime * 2.4 + seed) * 0.07;
         const bob = Math.abs(Math.sin(elapsedTime * 7 + seed)) * 0.14;
         const lean = Math.sin(elapsedTime * 5 + seed) * 0.12;
-        const x = centerX + Math.cos(baseAngle) * (ringRadius + wobble);
-        const z = centerZ + Math.sin(baseAngle) * (ringRadius + wobble);
+
+        const circleX = centerX + Math.cos(baseAngle) * (ringRadius + wobble);
+        const circleZ = centerZ + Math.sin(baseAngle) * (ringRadius + wobble);
+
+        const depthOffset = ring * 0.42 + Math.cos(baseAngle) * (ring * 0.12) + wobble;
+        const lateralOffset = Math.sin(baseAngle) * (ring * 0.5) + wobble;
+        const trailX = centerX - forwardX * depthOffset + rightX * lateralOffset;
+        const trailZ = centerZ - forwardZ * depthOffset + rightZ * lateralOffset;
+
+        const x = circleX + (trailX - circleX) * moveBlend;
+        const z = circleZ + (trailZ - circleZ) * moveBlend;
+
         dummy.position.set(x, PERSON_HALF_HEIGHT + bob, z);
         dummy.rotation.y = facingAngle + lean;
         dummy.updateMatrix();
@@ -189,9 +206,17 @@ if (!canUseWebGL()) {
     position: new THREE.Vector3(0, 0, 0),
     count: 15,
     facing: 0,
+    moveBlend: 0,
     mesh: makeCrowdMesh(0x3a7bd5, PLAYER_CAP),
   };
-  layoutFormation(player.mesh, player.count, player.position.x, player.position.z, player.facing);
+  layoutFormation(
+    player.mesh,
+    player.count,
+    player.position.x,
+    player.position.z,
+    player.facing,
+    player.moveBlend
+  );
 
   // --- Rival crowds — every crowd on the map is an enemy: bigger absorbs
   // smaller on contact. Counts ascend with spawn index (with some jitter)
@@ -216,12 +241,13 @@ if (!canUseWebGL()) {
     // absorb each other, so a single rival could in the worst case end up
     // holding close to the whole 10-rival pool.
     const mesh = makeCrowdMesh(rivalColors[i], 300);
-    layoutFormation(mesh, count, pos.x, pos.z, 0);
+    layoutFormation(mesh, count, pos.x, pos.z, 0, 0);
     rivalCrowds.push({
       name: rivalNames[i],
       position: pos,
       count,
       facing: 0,
+      moveBlend: 0,
       mesh,
       wanderTarget: pos.clone(),
       wanderTimer: 0,
@@ -350,9 +376,12 @@ if (!canUseWebGL()) {
     }
     const dx = rival.wanderTarget.x - rival.position.x;
     const dz = rival.wanderTarget.z - rival.position.z;
-    if (dx * dx + dz * dz > 0.0025) {
+    const isMoving = dx * dx + dz * dz > 0.0025;
+    if (isMoving) {
       rival.facing = Math.atan2(dx, dz);
     }
+    const blendRate = Math.min(1, delta * 4);
+    rival.moveBlend += ((isMoving ? 1 : 0) - rival.moveBlend) * blendRate;
     moveToward(rival.position, rival.wanderTarget, 3.5, delta);
     resolveBuildingCollision(rival.position, buildingCollisionRadius(rival.count));
   }
@@ -420,6 +449,8 @@ if (!canUseWebGL()) {
 
       const playerSpeed = 9;
       const keyDir = keyboardDirection();
+      const playerBlendRate = Math.min(1, delta * 4);
+      player.moveBlend += ((keyDir ? 1 : 0) - player.moveBlend) * playerBlendRate;
       if (keyDir) {
         player.position.x += keyDir.x * playerSpeed * delta;
         player.position.z += keyDir.z * playerSpeed * delta;
@@ -437,10 +468,11 @@ if (!canUseWebGL()) {
         Math.min(player.count, PLAYER_CAP),
         player.position.x,
         player.position.z,
-        player.facing
+        player.facing,
+        player.moveBlend
       );
       rivalCrowds.forEach((r) =>
-        layoutFormation(r.mesh, r.count, r.position.x, r.position.z, r.facing)
+        layoutFormation(r.mesh, r.count, r.position.x, r.position.z, r.facing, r.moveBlend)
       );
 
       hudTimer.textContent = formatTime(timeLeft);
