@@ -7,9 +7,9 @@ published: true
 
 Hi!
 
-I'm a Senior ML Engineer at **Adobe**, working on the AEP AI platform — building LLM assistants, agentic orchestration, RAG pipelines, and eval/regression infrastructure.
+I'm a Senior ML Engineer at **Adobe**, building LLM Assistants, agentic orchestration and eval/regression infrastructure for the AEP AI platform.
 
-Before Adobe I spent three years at **Twitter** on the ML inference platform — a serving system that handled 500+ models at 5M+ QPS. I worked on integrating TensorFlow Serving, KFServing/KServe, and NVIDIA Triton.
+Before Adobe I spent three years at **Twitter** on it's ML inference platform - a serving system that handled 500+ models at 5M+ QPS.
 
 Earlier I was a backend engineer at **HackerRank**. I've also worked on web wallets & solidity contracts for **Zilliqa**, an innovative blockchain and smart contract platform. I received my undergrad from **BITS Pilani** and my MS in Computer Science from **UT Dallas**.
 
