@@ -157,6 +157,13 @@ if (!canUseWebGL()) {
   function makeCrowdMesh(color, capacity) {
     const material = new THREE.MeshLambertMaterial({ color });
     const mesh = new THREE.InstancedMesh(personGeometry, material, capacity);
+    // Instances are placed via per-instance matrices at their world
+    // position while the mesh itself never moves from local origin, so
+    // Three.js's default frustum-culling bounds (computed from the base
+    // geometry at that untouched origin) don't cover where the crowd
+    // actually is. Without this, the whole mesh gets culled as soon as
+    // the crowd wanders far enough from world origin.
+    mesh.frustumCulled = false;
     scene.add(mesh);
     return mesh;
   }
@@ -240,6 +247,59 @@ if (!canUseWebGL()) {
 
   window.addEventListener('pointermove', (e) => updatePointerTarget(e.clientX, e.clientY));
   window.addEventListener('pointerdown', (e) => updatePointerTarget(e.clientX, e.clientY));
+
+  // --- Keyboard input: WASD / arrow keys override pointer-follow when held ---
+
+  const keys = { up: false, down: false, left: false, right: false };
+  const movementKeyCodes = new Set([
+    'KeyW',
+    'KeyA',
+    'KeyS',
+    'KeyD',
+    'ArrowUp',
+    'ArrowDown',
+    'ArrowLeft',
+    'ArrowRight',
+  ]);
+
+  function setKeyState(code, value) {
+    switch (code) {
+      case 'KeyW':
+      case 'ArrowUp':
+        keys.up = value;
+        break;
+      case 'KeyS':
+      case 'ArrowDown':
+        keys.down = value;
+        break;
+      case 'KeyA':
+      case 'ArrowLeft':
+        keys.left = value;
+        break;
+      case 'KeyD':
+      case 'ArrowRight':
+        keys.right = value;
+        break;
+    }
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (movementKeyCodes.has(e.code)) e.preventDefault();
+    setKeyState(e.code, true);
+  });
+  window.addEventListener('keyup', (e) => setKeyState(e.code, false));
+
+  function keyboardDirection() {
+    let dx = 0;
+    let dz = 0;
+    if (keys.up) dz -= 1;
+    if (keys.down) dz += 1;
+    if (keys.left) dx -= 1;
+    if (keys.right) dx += 1;
+    if (dx === 0 && dz === 0) return null;
+    const len = Math.sqrt(dx * dx + dz * dz);
+    return { x: dx / len, z: dz / len };
+  }
 
   // --- Game state / loop ---
 
@@ -335,8 +395,13 @@ if (!canUseWebGL()) {
         endRound("Time's Up!");
       }
 
-      if (hasPointer) {
-        moveToward(player.position, pointerTarget, 9, delta);
+      const playerSpeed = 9;
+      const keyDir = keyboardDirection();
+      if (keyDir) {
+        player.position.x += keyDir.x * playerSpeed * delta;
+        player.position.z += keyDir.z * playerSpeed * delta;
+      } else if (hasPointer) {
+        moveToward(player.position, pointerTarget, playerSpeed, delta);
       }
       resolveBuildingCollision(player.position, buildingCollisionRadius(player.count));
 
