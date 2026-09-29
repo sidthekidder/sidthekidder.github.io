@@ -172,7 +172,7 @@ if (!canUseWebGL()) {
 
   const player = {
     position: new THREE.Vector3(0, 0, 0),
-    count: 5,
+    count: 15,
     mesh: makeCrowdMesh(0x3a7bd5, PLAYER_CAP),
   };
   layoutFormation(player.mesh, player.count, player.position.x, player.position.z);
@@ -194,7 +194,7 @@ if (!canUseWebGL()) {
   const rivalCrowds = [];
 
   for (let i = 0; i < RIVAL_COUNT; i++) {
-    const count = 3 + i * 4 + Math.floor(Math.random() * 6);
+    const count = 2 + i * 3 + Math.floor(Math.random() * 4);
     const pos = randomRoadPosition(buildingCollisionRadius(count));
     const mesh = makeCrowdMesh(rivalColors[i], 200);
     layoutFormation(mesh, count, pos.x, pos.z);
@@ -305,7 +305,6 @@ if (!canUseWebGL()) {
     );
     entries.sort((a, b) => b.count - a.count);
     leaderboardEl.innerHTML = entries
-      .slice(0, 4)
       .map(
         (e) =>
           `<div class="${e.you ? 'you' : ''}"><span>${e.name}</span><span>${e.count}</span></div>`
