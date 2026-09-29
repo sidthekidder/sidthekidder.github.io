@@ -115,7 +115,13 @@ if (!canUseWebGL()) {
 
   // --- Crowd helpers ---
 
-  const personGeometry = new THREE.ConeGeometry(0.28, 0.9, 6);
+  const personGeometry = new THREE.CapsuleGeometry(0.16, 0.35, 3, 6);
+  const PERSON_HALF_HEIGHT = 0.35 / 2 + 0.16;
+
+  // Advances every frame; read (not written) inside layoutFormation to
+  // drive the bob/wobble animation without threading a time argument
+  // through every call site.
+  let elapsedTime = 0;
 
   function crowdRadius(count) {
     return 0.6 + Math.sqrt(count) * 0.35;
@@ -131,7 +137,12 @@ if (!canUseWebGL()) {
     return Math.min(crowdRadius(count), 1.3);
   }
 
-  function layoutFormation(mesh, count, centerX, centerZ) {
+  // Lays the crowd out in clean concentric rings (a stable circle) around
+  // its centroid, then layers a per-instance sine wobble/bob/lean on top —
+  // each figure gently drifts in and out and bounces as it "runs", giving
+  // the mass a soft, fluid look instead of rigid fixed points, while the
+  // ring structure itself always stays circular.
+  function layoutFormation(mesh, count, centerX, centerZ, facingAngle) {
     const dummy = new THREE.Object3D();
     let placed = 0;
     let ring = 0;
@@ -139,11 +150,15 @@ if (!canUseWebGL()) {
       const ringCapacity = ring === 0 ? 1 : ring * 6;
       const ringRadius = ring * 0.55;
       for (let i = 0; i < ringCapacity && placed < count; i++) {
-        const angle = (i / ringCapacity) * Math.PI * 2 + ring * 0.3;
-        const x = centerX + Math.cos(angle) * ringRadius;
-        const z = centerZ + Math.sin(angle) * ringRadius;
-        dummy.position.set(x, 0.45, z);
-        dummy.rotation.y = angle;
+        const baseAngle = (i / ringCapacity) * Math.PI * 2;
+        const seed = placed * 12.9898;
+        const wobble = Math.sin(elapsedTime * 2.4 + seed) * 0.07;
+        const bob = Math.abs(Math.sin(elapsedTime * 7 + seed)) * 0.14;
+        const lean = Math.sin(elapsedTime * 5 + seed) * 0.12;
+        const x = centerX + Math.cos(baseAngle) * (ringRadius + wobble);
+        const z = centerZ + Math.sin(baseAngle) * (ringRadius + wobble);
+        dummy.position.set(x, PERSON_HALF_HEIGHT + bob, z);
+        dummy.rotation.y = facingAngle + lean;
         dummy.updateMatrix();
         mesh.setMatrixAt(placed, dummy.matrix);
         placed++;
@@ -173,9 +188,10 @@ if (!canUseWebGL()) {
   const player = {
     position: new THREE.Vector3(0, 0, 0),
     count: 15,
+    facing: 0,
     mesh: makeCrowdMesh(0x3a7bd5, PLAYER_CAP),
   };
-  layoutFormation(player.mesh, player.count, player.position.x, player.position.z);
+  layoutFormation(player.mesh, player.count, player.position.x, player.position.z, player.facing);
 
   // --- Rival crowds — every crowd on the map is an enemy: bigger absorbs
   // smaller on contact. Counts ascend with spawn index (with some jitter)
@@ -200,11 +216,12 @@ if (!canUseWebGL()) {
     // absorb each other, so a single rival could in the worst case end up
     // holding close to the whole 10-rival pool.
     const mesh = makeCrowdMesh(rivalColors[i], 300);
-    layoutFormation(mesh, count, pos.x, pos.z);
+    layoutFormation(mesh, count, pos.x, pos.z, 0);
     rivalCrowds.push({
       name: rivalNames[i],
       position: pos,
       count,
+      facing: 0,
       mesh,
       wanderTarget: pos.clone(),
       wanderTimer: 0,
@@ -331,6 +348,11 @@ if (!canUseWebGL()) {
       rival.wanderTarget = randomRoadPosition(buildingCollisionRadius(rival.count));
       rival.wanderTimer = 2 + Math.random() * 3;
     }
+    const dx = rival.wanderTarget.x - rival.position.x;
+    const dz = rival.wanderTarget.z - rival.position.z;
+    if (dx * dx + dz * dz > 0.0025) {
+      rival.facing = Math.atan2(dx, dz);
+    }
     moveToward(rival.position, rival.wanderTarget, 3.5, delta);
     resolveBuildingCollision(rival.position, buildingCollisionRadius(rival.count));
   }
@@ -347,11 +369,10 @@ if (!canUseWebGL()) {
         for (let j = i + 1; j < rivalCrowds.length; j++) {
           const a = rivalCrowds[i];
           const b = rivalCrowds[j];
-          if (a.count === b.count) continue;
           const dist = a.position.distanceTo(b.position);
           if (dist < crowdRadius(a.count) + crowdRadius(b.count)) {
-            const winner = a.count > b.count ? a : b;
-            const loser = a.count > b.count ? b : a;
+            const winner = a.count >= b.count ? a : b;
+            const loser = a.count >= b.count ? b : a;
             winner.count += loser.count;
             scene.remove(loser.mesh);
             rivalCrowds.splice(rivalCrowds.indexOf(loser), 1);
@@ -368,11 +389,11 @@ if (!canUseWebGL()) {
       const r = rivalCrowds[i];
       const dist = player.position.distanceTo(r.position);
       if (dist < crowdRadius(player.count) + crowdRadius(r.count)) {
-        if (player.count > r.count) {
+        if (player.count >= r.count) {
           player.count += r.count;
           scene.remove(r.mesh);
           rivalCrowds.splice(i, 1);
-        } else if (r.count > player.count) {
+        } else {
           scene.remove(r.mesh);
           rivalCrowds.splice(i, 1);
           endRound('Defeated!');
@@ -388,6 +409,7 @@ if (!canUseWebGL()) {
 
   function animate() {
     const delta = Math.min(clock.getDelta(), 0.1);
+    elapsedTime += delta;
 
     if (!gameOver) {
       timeLeft -= delta;
@@ -401,6 +423,7 @@ if (!canUseWebGL()) {
       if (keyDir) {
         player.position.x += keyDir.x * playerSpeed * delta;
         player.position.z += keyDir.z * playerSpeed * delta;
+        player.facing = Math.atan2(keyDir.x, keyDir.z);
       }
       resolveBuildingCollision(player.position, buildingCollisionRadius(player.count));
 
@@ -413,9 +436,12 @@ if (!canUseWebGL()) {
         player.mesh,
         Math.min(player.count, PLAYER_CAP),
         player.position.x,
-        player.position.z
+        player.position.z,
+        player.facing
       );
-      rivalCrowds.forEach((r) => layoutFormation(r.mesh, r.count, r.position.x, r.position.z));
+      rivalCrowds.forEach((r) =>
+        layoutFormation(r.mesh, r.count, r.position.x, r.position.z, r.facing)
+      );
 
       hudTimer.textContent = formatTime(timeLeft);
       hudCount.textContent = String(player.count);
