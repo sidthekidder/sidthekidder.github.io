@@ -17,7 +17,7 @@ body {
   overflow-x: hidden;
 }
 
-.hero {
+.chapter {
   position: relative;
   height: 100vh;
   display: flex;
@@ -28,7 +28,7 @@ body {
   padding: 2rem;
 }
 
-.hero-title {
+.chapter-title {
   font-size: clamp(3rem, 12vw, 8rem);
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -38,25 +38,53 @@ body {
   color: transparent;
 }
 
-.hero-subtitle {
+.chapter-subtitle {
   margin-top: 1rem;
   font-size: clamp(1rem, 2vw, 1.5rem);
   color: var(--muted);
 }
 
-.js .hero-title,
-.js .hero-subtitle {
+.js .chapter-title,
+.js .chapter-subtitle {
   opacity: 0;
-  animation: hero-in 1s ease-out forwards;
+  animation: chapter-in 1s ease-out forwards;
 }
 
-.js .hero-subtitle {
+.js .chapter-subtitle {
   animation-delay: 0.4s;
 }
 
-@keyframes hero-in {
+@keyframes chapter-in {
   from { opacity: 0; transform: translateY(40px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+.chapter-line {
+  max-width: 900px;
+  font-size: clamp(2rem, 7vw, 4.5rem);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.word {
+  display: inline-block;
+}
+
+.js .word {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+.word.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.accent-word {
+  color: var(--accent);
+  text-shadow: 0 0 24px rgba(124, 252, 174, 0.45);
 }
 
 .scroll-cue {
