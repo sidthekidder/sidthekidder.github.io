@@ -177,25 +177,24 @@ if (!canUseWebGL()) {
   };
   layoutFormation(player.mesh, player.count, player.position.x, player.position.z);
 
-  // --- Neutral crowds (always join on contact) ---
+  // --- Rival crowds — every crowd on the map is an enemy: bigger absorbs
+  // smaller on contact. Counts ascend with spawn index (with some jitter)
+  // so early rivals are beatable from the player's starting size of 5 and
+  // later ones demand you've grown first. ---
 
-  const neutralCrowds = [];
-  for (let i = 0; i < 10; i++) {
-    const count = 5 + Math.floor(Math.random() * 26);
-    const pos = randomRoadPosition(buildingCollisionRadius(count));
-    const mesh = makeCrowdMesh(0xf4f4f8, count);
-    layoutFormation(mesh, count, pos.x, pos.z);
-    neutralCrowds.push({ position: pos, count, mesh });
-  }
-
-  // --- Rival crowds (bigger absorbs smaller on contact) ---
-
-  const rivalColors = [0xe15554, 0xff8c42, 0x9b5de5];
-  const rivalNames = ['Redcoat', 'Blazer', 'Violet'];
+  const rivalColors = [
+    0xe15554, 0xff8c42, 0x9b5de5, 0xf9c74f, 0x43aa8b,
+    0xf72585, 0x577590, 0x90be6d, 0xf3722c, 0x4d908e,
+  ];
+  const rivalNames = [
+    'Redcoat', 'Blazer', 'Violet', 'Marigold', 'Ember',
+    'Magenta', 'Slate', 'Clover', 'Rust', 'Teal',
+  ];
+  const RIVAL_COUNT = 10;
   const rivalCrowds = [];
 
-  for (let i = 0; i < 3; i++) {
-    const count = 15 + Math.floor(Math.random() * 16);
+  for (let i = 0; i < RIVAL_COUNT; i++) {
+    const count = 3 + i * 4 + Math.floor(Math.random() * 6);
     const pos = randomRoadPosition(buildingCollisionRadius(count));
     const mesh = makeCrowdMesh(rivalColors[i], 200);
     layoutFormation(mesh, count, pos.x, pos.z);
@@ -357,16 +356,6 @@ if (!canUseWebGL()) {
   }
 
   function checkCollisions() {
-    for (let i = neutralCrowds.length - 1; i >= 0; i--) {
-      const n = neutralCrowds[i];
-      const dist = player.position.distanceTo(n.position);
-      if (dist < crowdRadius(player.count) + crowdRadius(n.count)) {
-        player.count += n.count;
-        scene.remove(n.mesh);
-        neutralCrowds.splice(i, 1);
-      }
-    }
-
     for (let i = rivalCrowds.length - 1; i >= 0; i--) {
       const r = rivalCrowds[i];
       const dist = player.position.distanceTo(r.position);
@@ -382,6 +371,10 @@ if (!canUseWebGL()) {
           return;
         }
       }
+    }
+
+    if (rivalCrowds.length === 0) {
+      endRound('All Rivals Defeated!');
     }
   }
 
