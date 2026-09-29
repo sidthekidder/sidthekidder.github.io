@@ -1,4 +1,5 @@
 import * as THREE from 'https://esm.sh/three@0.165.0';
+import * as CANNON from 'https://esm.sh/cannon-es@0.20.0';
 
 function canUseWebGL() {
   try {
@@ -16,6 +17,7 @@ if (!canUseWebGL()) {
   const ARENA_HALF = 30;
   const ROUND_SECONDS = 60;
   const PLAYER_CAP = 500;
+  const SOLDIER_RADIUS = 0.18;
 
   const hudTimer = document.getElementById('hud-timer');
   const hudCount = document.getElementById('hud-count');
@@ -58,9 +60,25 @@ if (!canUseWebGL()) {
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
 
-  // --- City blocks (solid obstacles) ---
+  // --- Physics world ---
+  // Every individual soldier is a real rigid body here, not just each
+  // crowd's centroid — so soldiers physically jostle each other, collide
+  // with buildings, and knock into rival crowds on contact. This is a
+  // deliberate performance tradeoff (up to ~200 bodies at once) accepted
+  // over the safer/cheaper "one body per crowd" approach, and hasn't been
+  // verified against real frame-rate in a browser.
 
-  const buildings = []; // { minX, maxX, minZ, maxZ }
+  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
+
+  const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
+  groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+  world.addBody(groundBody);
+
+  // --- City blocks (solid obstacles — real physics bodies now, soldiers
+  // collide with them directly instead of being algebraically pushed out) ---
+
+  const buildings = []; // { minX, maxX, minZ, maxZ } — still used by the
+  // logical leader position's own navigation, see resolveBuildingCollision
   const buildingColors = [0xf2d7a0, 0xa7c7e7, 0xf4a6a6, 0xb8e0c2];
   const gridPositions = [-24, -12, 0, 12, 24];
 
@@ -82,9 +100,19 @@ if (!canUseWebGL()) {
         minZ: bz - size / 2,
         maxZ: bz + size / 2,
       });
+
+      const buildingBody = new CANNON.Body({
+        mass: 0,
+        shape: new CANNON.Box(new CANNON.Vec3(size / 2, 6, size / 2)),
+        position: new CANNON.Vec3(bx, 6, bz),
+      });
+      world.addBody(buildingBody);
     });
   });
 
+  // Still used for the crowd's *logical* leader position (win/lose checks,
+  // camera target) — kept independent of the physics simulation so core
+  // gameplay stays deterministic even under heavy physics load.
   function resolveBuildingCollision(position, radius) {
     for (const b of buildings) {
       const closestX = Math.max(b.minX, Math.min(position.x, b.maxX));
@@ -117,10 +145,10 @@ if (!canUseWebGL()) {
 
   const personGeometry = new THREE.CapsuleGeometry(0.16, 0.35, 3, 6);
   const PERSON_HALF_HEIGHT = 0.35 / 2 + 0.16;
+  // Aligns the capsule's visual base with where its physics sphere
+  // actually rests on the ground (sphere settles at y = its own radius).
+  const RENDER_Y_OFFSET = PERSON_HALF_HEIGHT - SOLDIER_RADIUS;
 
-  // Advances every frame; read (not written) inside layoutFormation to
-  // drive the bob/wobble animation without threading a time argument
-  // through every call site.
   let elapsedTime = 0;
 
   function crowdRadius(count) {
@@ -128,62 +156,61 @@ if (!canUseWebGL()) {
   }
 
   // Road gaps between buildings are 4 units wide. Capture range should keep
-  // growing with crowd size, but the radius used to push the crowd's
-  // *centroid* off buildings must stay under half that gap, or a big crowd
-  // gets wedged between two buildings pushing it apart from both sides at
-  // once. Capping it here lets a large crowd's edges visually spill past
-  // building corners while its center still threads the road.
+  // growing with crowd size, but the radius used to push the *logical*
+  // leader position off buildings must stay under half that gap, or a big
+  // crowd gets wedged between two buildings at once.
   function buildingCollisionRadius(count) {
     return Math.min(crowdRadius(count), 1.3);
   }
 
-  // Lays the crowd out as a blend of two formations, controlled by
-  // moveBlend (0 = fully gathered, 1 = fully moving):
-  //   - circle: concentric rings around the centroid (idle, "gathered")
-  //   - trail: a wedge fanning out BEHIND the facing direction, with the
-  //     very first instance (ring 0) sitting right at the crowd's actual
-  //     position — the leader everyone else trails.
-  // A per-instance sine wobble/bob/lean rides on top of either formation
-  // for a soft, alive, flowing look rather than rigid fixed points.
-  function layoutFormation(mesh, count, centerX, centerZ, facingAngle, moveBlend) {
-    const dummy = new THREE.Object3D();
+  // Where soldier `index` (within a crowd of any size) belongs, blending
+  // between a gathered circle (moveBlend 0) and a wedge trailing behind
+  // the facing direction (moveBlend 1). This is a target for physics
+  // *steering*, not a direct position write — the solver has the final
+  // say once collisions with neighbors/buildings are factored in.
+  function computeSlotPosition(index, centerX, centerZ, facingAngle, moveBlend) {
+    let ring = 0;
+    let ringStart = 0;
+    let ringCapacity = 1;
+    while (index >= ringStart + ringCapacity) {
+      ringStart += ringCapacity;
+      ring++;
+      ringCapacity = ring * 6;
+    }
+    const posInRing = index - ringStart;
+    const baseAngle = (posInRing / ringCapacity) * Math.PI * 2;
+    const seed = index * 12.9898;
+    const wobble = Math.sin(elapsedTime * 2.4 + seed) * 0.07;
+
+    const ringRadius = ring * 0.55;
+    const circleX = centerX + Math.cos(baseAngle) * (ringRadius + wobble);
+    const circleZ = centerZ + Math.sin(baseAngle) * (ringRadius + wobble);
+
     const forwardX = Math.sin(facingAngle);
     const forwardZ = Math.cos(facingAngle);
     const rightX = Math.cos(facingAngle);
     const rightZ = -Math.sin(facingAngle);
-    let placed = 0;
-    let ring = 0;
-    while (placed < count) {
-      const ringCapacity = ring === 0 ? 1 : ring * 6;
-      const ringRadius = ring * 0.55;
-      for (let i = 0; i < ringCapacity && placed < count; i++) {
-        const baseAngle = (i / ringCapacity) * Math.PI * 2;
-        const seed = placed * 12.9898;
-        const wobble = Math.sin(elapsedTime * 2.4 + seed) * 0.07;
-        const bob = Math.abs(Math.sin(elapsedTime * 7 + seed)) * 0.14;
-        const lean = Math.sin(elapsedTime * 5 + seed) * 0.12;
+    const depthOffset = ring * 0.42 + Math.cos(baseAngle) * (ring * 0.12) + wobble;
+    const lateralOffset = Math.sin(baseAngle) * (ring * 0.5) + wobble;
+    const trailX = centerX - forwardX * depthOffset + rightX * lateralOffset;
+    const trailZ = centerZ - forwardZ * depthOffset + rightZ * lateralOffset;
 
-        const circleX = centerX + Math.cos(baseAngle) * (ringRadius + wobble);
-        const circleZ = centerZ + Math.sin(baseAngle) * (ringRadius + wobble);
+    return {
+      x: circleX + (trailX - circleX) * moveBlend,
+      z: circleZ + (trailZ - circleZ) * moveBlend,
+    };
+  }
 
-        const depthOffset = ring * 0.42 + Math.cos(baseAngle) * (ring * 0.12) + wobble;
-        const lateralOffset = Math.sin(baseAngle) * (ring * 0.5) + wobble;
-        const trailX = centerX - forwardX * depthOffset + rightX * lateralOffset;
-        const trailZ = centerZ - forwardZ * depthOffset + rightZ * lateralOffset;
-
-        const x = circleX + (trailX - circleX) * moveBlend;
-        const z = circleZ + (trailZ - circleZ) * moveBlend;
-
-        dummy.position.set(x, PERSON_HALF_HEIGHT + bob, z);
-        dummy.rotation.y = facingAngle + lean;
-        dummy.updateMatrix();
-        mesh.setMatrixAt(placed, dummy.matrix);
-        placed++;
-      }
-      ring++;
-    }
-    mesh.count = count;
-    mesh.instanceMatrix.needsUpdate = true;
+  function makeSoldierBody(x, z) {
+    const body = new CANNON.Body({
+      mass: 1,
+      shape: new CANNON.Sphere(SOLDIER_RADIUS),
+      position: new CANNON.Vec3(x, 0.5 + Math.random() * 0.5, z),
+      linearDamping: 0.85,
+      fixedRotation: true,
+    });
+    world.addBody(body);
+    return body;
   }
 
   function makeCrowdMesh(color, capacity) {
@@ -200,6 +227,18 @@ if (!canUseWebGL()) {
     return mesh;
   }
 
+  // Spawns each soldier already near its formation slot (rather than all
+  // stacked at one point), so the physics solver doesn't have to violently
+  // separate a pile of exactly-overlapping bodies on the first step.
+  function spawnBodies(count, x, z) {
+    const bodies = [];
+    for (let i = 0; i < count; i++) {
+      const slot = computeSlotPosition(i, x, z, 0, 0);
+      bodies.push(makeSoldierBody(slot.x, slot.z));
+    }
+    return bodies;
+  }
+
   // --- Player ---
 
   const player = {
@@ -208,19 +247,13 @@ if (!canUseWebGL()) {
     facing: 0,
     moveBlend: 0,
     mesh: makeCrowdMesh(0x3a7bd5, PLAYER_CAP),
+    bodies: [],
   };
-  layoutFormation(
-    player.mesh,
-    player.count,
-    player.position.x,
-    player.position.z,
-    player.facing,
-    player.moveBlend
-  );
+  player.bodies = spawnBodies(player.count, player.position.x, player.position.z);
 
   // --- Rival crowds — every crowd on the map is an enemy: bigger absorbs
   // smaller on contact. Counts ascend with spawn index (with some jitter)
-  // so early rivals are beatable from the player's starting size of 5 and
+  // so early rivals are beatable from the player's starting size of 15 and
   // later ones demand you've grown first. ---
 
   const rivalColors = [
@@ -241,7 +274,7 @@ if (!canUseWebGL()) {
     // absorb each other, so a single rival could in the worst case end up
     // holding close to the whole 10-rival pool.
     const mesh = makeCrowdMesh(rivalColors[i], 300);
-    layoutFormation(mesh, count, pos.x, pos.z, 0, 0);
+    const bodies = spawnBodies(count, pos.x, pos.z);
     rivalCrowds.push({
       name: rivalNames[i],
       position: pos,
@@ -249,6 +282,7 @@ if (!canUseWebGL()) {
       facing: 0,
       moveBlend: 0,
       mesh,
+      bodies,
       wanderTarget: pos.clone(),
       wanderTimer: 0,
     });
@@ -387,9 +421,10 @@ if (!canUseWebGL()) {
   }
 
   // Rivals also absorb each other on contact (bigger wins, same rule as
-  // the player). Resolved one pair per pass and re-scanned from scratch
-  // after each merge, since removing a rival shifts every index after it
-  // — with at most 10 rivals this is cheap and avoids index-juggling bugs.
+  // the player) — the loser's physics bodies transfer straight into the
+  // winner's array (no need to destroy/recreate them), so the absorbed
+  // soldiers keep their exact physics state and visibly run to join the
+  // winner's new formation slots on the following frames.
   function checkRivalVsRivalCollisions() {
     let resolvedAny = true;
     while (resolvedAny) {
@@ -402,6 +437,7 @@ if (!canUseWebGL()) {
           if (dist < crowdRadius(a.count) + crowdRadius(b.count)) {
             const winner = a.count >= b.count ? a : b;
             const loser = a.count >= b.count ? b : a;
+            winner.bodies = winner.bodies.concat(loser.bodies);
             winner.count += loser.count;
             scene.remove(loser.mesh);
             rivalCrowds.splice(rivalCrowds.indexOf(loser), 1);
@@ -419,6 +455,7 @@ if (!canUseWebGL()) {
       const dist = player.position.distanceTo(r.position);
       if (dist < crowdRadius(player.count) + crowdRadius(r.count)) {
         if (player.count >= r.count) {
+          player.bodies = player.bodies.concat(r.bodies);
           player.count += r.count;
           scene.remove(r.mesh);
           rivalCrowds.splice(i, 1);
@@ -434,6 +471,56 @@ if (!canUseWebGL()) {
     if (rivalCrowds.length === 0) {
       endRound('All Rivals Defeated!');
     }
+  }
+
+  const dummy = new THREE.Object3D();
+
+  // Sets each soldier's steering intent (velocity toward its formation
+  // slot) before the physics step — the solver has the final say on
+  // actual motion once collisions with neighbors/buildings are resolved.
+  function steerCrowd(crowd) {
+    const steerSpeed = 6;
+    crowd.bodies.forEach((body, i) => {
+      const slot = computeSlotPosition(
+        i,
+        crowd.position.x,
+        crowd.position.z,
+        crowd.facing,
+        crowd.moveBlend
+      );
+      const dx = slot.x - body.position.x;
+      const dz = slot.z - body.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist > 0.02) {
+        const speed = Math.min(steerSpeed, dist * 8);
+        body.velocity.x = (dx / dist) * speed;
+        body.velocity.z = (dz / dist) * speed;
+      } else {
+        body.velocity.x *= 0.5;
+        body.velocity.z *= 0.5;
+      }
+    });
+  }
+
+  // Reads back each soldier's resolved physics position (after the world
+  // step) and writes it into the crowd's InstancedMesh, with a small
+  // cosmetic bob/lean layered on top.
+  function renderCrowd(crowd) {
+    crowd.bodies.forEach((body, i) => {
+      const seed = i * 12.9898;
+      const bob = Math.abs(Math.sin(elapsedTime * 7 + seed)) * 0.14;
+      const lean = Math.sin(elapsedTime * 5 + seed) * 0.12;
+      dummy.position.set(
+        body.position.x,
+        body.position.y + RENDER_Y_OFFSET + bob,
+        body.position.z
+      );
+      dummy.rotation.y = crowd.facing + lean;
+      dummy.updateMatrix();
+      crowd.mesh.setMatrixAt(i, dummy.matrix);
+    });
+    crowd.mesh.count = crowd.bodies.length;
+    crowd.mesh.instanceMatrix.needsUpdate = true;
   }
 
   function animate() {
@@ -463,17 +550,13 @@ if (!canUseWebGL()) {
 
       checkCollisions();
 
-      layoutFormation(
-        player.mesh,
-        Math.min(player.count, PLAYER_CAP),
-        player.position.x,
-        player.position.z,
-        player.facing,
-        player.moveBlend
-      );
-      rivalCrowds.forEach((r) =>
-        layoutFormation(r.mesh, r.count, r.position.x, r.position.z, r.facing, r.moveBlend)
-      );
+      steerCrowd(player);
+      rivalCrowds.forEach((r) => steerCrowd(r));
+
+      world.step(1 / 60, delta, 3);
+
+      renderCrowd(player);
+      rivalCrowds.forEach((r) => renderCrowd(r));
 
       hudTimer.textContent = formatTime(timeLeft);
       hudCount.textContent = String(player.count);
