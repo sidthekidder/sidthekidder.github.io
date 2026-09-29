@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Audio Visualizer — Experiments</title>
+<link rel="stylesheet" href="../../style.css">
+<style>
+  body { overflow: hidden; }
+  canvas { display: block; }
+  .audio-controls {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    z-index: 10;
+    background: rgba(10, 10, 15, 0.7);
+    padding: 1rem 1.5rem;
+    border-radius: 12px;
+  }
+  .audio-controls button,
+  .audio-controls label {
+    color: var(--fg);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.9rem;
+  }
+  .audio-status { color: var(--muted); font-size: 0.85rem; }
+  input[type="file"] { display: none; }
+</style>
+</head>
+<body>
+  <a class="back-link" href="../../index.html">← back</a>
+  <div class="audio-controls">
+    <button id="mic-button">Use microphone</button>
+    <label for="file-input">Upload audio</label>
+    <input type="file" id="file-input" accept="audio/*">
+    <span class="audio-status" id="audio-status">Choose a source to start</span>
+  </div>
+  <script type="module" src="visualizer.js"></script>
+</body>
+</html>
