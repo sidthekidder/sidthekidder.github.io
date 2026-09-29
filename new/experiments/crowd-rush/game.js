@@ -121,6 +121,16 @@ if (!canUseWebGL()) {
     return 0.6 + Math.sqrt(count) * 0.35;
   }
 
+  // Road gaps between buildings are 4 units wide. Capture range should keep
+  // growing with crowd size, but the radius used to push the crowd's
+  // *centroid* off buildings must stay under half that gap, or a big crowd
+  // gets wedged between two buildings pushing it apart from both sides at
+  // once. Capping it here lets a large crowd's edges visually spill past
+  // building corners while its center still threads the road.
+  function buildingCollisionRadius(count) {
+    return Math.min(crowdRadius(count), 1.3);
+  }
+
   function layoutFormation(mesh, count, centerX, centerZ) {
     const dummy = new THREE.Object3D();
     let placed = 0;
@@ -165,7 +175,7 @@ if (!canUseWebGL()) {
   const neutralCrowds = [];
   for (let i = 0; i < 10; i++) {
     const count = 5 + Math.floor(Math.random() * 26);
-    const pos = randomRoadPosition(crowdRadius(count));
+    const pos = randomRoadPosition(buildingCollisionRadius(count));
     const mesh = makeCrowdMesh(0xf4f4f8, count);
     layoutFormation(mesh, count, pos.x, pos.z);
     neutralCrowds.push({ position: pos, count, mesh });
@@ -179,7 +189,7 @@ if (!canUseWebGL()) {
 
   for (let i = 0; i < 3; i++) {
     const count = 15 + Math.floor(Math.random() * 16);
-    const pos = randomRoadPosition(crowdRadius(count));
+    const pos = randomRoadPosition(buildingCollisionRadius(count));
     const mesh = makeCrowdMesh(rivalColors[i], 200);
     layoutFormation(mesh, count, pos.x, pos.z);
     rivalCrowds.push({
@@ -279,11 +289,11 @@ if (!canUseWebGL()) {
   function updateRivalAI(rival, delta) {
     rival.wanderTimer -= delta;
     if (rival.wanderTimer <= 0) {
-      rival.wanderTarget = randomRoadPosition(crowdRadius(rival.count));
+      rival.wanderTarget = randomRoadPosition(buildingCollisionRadius(rival.count));
       rival.wanderTimer = 2 + Math.random() * 3;
     }
     moveToward(rival.position, rival.wanderTarget, 3.5, delta);
-    resolveBuildingCollision(rival.position, crowdRadius(rival.count));
+    resolveBuildingCollision(rival.position, buildingCollisionRadius(rival.count));
   }
 
   function checkCollisions() {
@@ -328,7 +338,7 @@ if (!canUseWebGL()) {
       if (hasPointer) {
         moveToward(player.position, pointerTarget, 9, delta);
       }
-      resolveBuildingCollision(player.position, crowdRadius(player.count));
+      resolveBuildingCollision(player.position, buildingCollisionRadius(player.count));
 
       rivalCrowds.forEach((r) => updateRivalAI(r, delta));
 
