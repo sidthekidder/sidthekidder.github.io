@@ -3,7 +3,7 @@ layout: post
 title: Five Years of Podcasts
 published: true
 ---
-I started listening to tech podcasts in 2014. I had a horrible commute during my summer internship in Noida that required 4 hours of traveling a day. It wasn't much better in the next 6 months of my PS in Bangalore - 3 hours everyday.
+I started listening to tech podcasts in 2014. My summer internship in Noida required almost 4 hours of travelling a day. It wasn't much better in my 2015 fall internship in Bangalore - 3 hours in the bus daily.
 
 But then a strange thing happened. I eventually began to look forward to these commutes. They became an integral part of my day, the most interesting part some days. This is all thanks to podcasts, which for some reason I never knew existed until a friend introduced them to me. 
 
