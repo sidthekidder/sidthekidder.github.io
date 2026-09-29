@@ -72,7 +72,7 @@ if (!canUseWebGL()) {
       const color = buildingColors[Math.floor(Math.random() * buildingColors.length)];
       const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(size, height, size),
-        new THREE.MeshLambertMaterial({ color })
+        new THREE.MeshLambertMaterial({ color, transparent: true, opacity: 0.55 })
       );
       mesh.position.set(bx, height / 2, bz);
       scene.add(mesh);
@@ -196,7 +196,10 @@ if (!canUseWebGL()) {
   for (let i = 0; i < RIVAL_COUNT; i++) {
     const count = 2 + i * 3 + Math.floor(Math.random() * 4);
     const pos = randomRoadPosition(buildingCollisionRadius(count));
-    const mesh = makeCrowdMesh(rivalColors[i], 200);
+    // Capacity is generous headroom, not the expected size: rivals can now
+    // absorb each other, so a single rival could in the worst case end up
+    // holding close to the whole 10-rival pool.
+    const mesh = makeCrowdMesh(rivalColors[i], 300);
     layoutFormation(mesh, count, pos.x, pos.z);
     rivalCrowds.push({
       name: rivalNames[i],
@@ -332,6 +335,34 @@ if (!canUseWebGL()) {
     resolveBuildingCollision(rival.position, buildingCollisionRadius(rival.count));
   }
 
+  // Rivals also absorb each other on contact (bigger wins, same rule as
+  // the player). Resolved one pair per pass and re-scanned from scratch
+  // after each merge, since removing a rival shifts every index after it
+  // — with at most 10 rivals this is cheap and avoids index-juggling bugs.
+  function checkRivalVsRivalCollisions() {
+    let resolvedAny = true;
+    while (resolvedAny) {
+      resolvedAny = false;
+      for (let i = 0; i < rivalCrowds.length && !resolvedAny; i++) {
+        for (let j = i + 1; j < rivalCrowds.length; j++) {
+          const a = rivalCrowds[i];
+          const b = rivalCrowds[j];
+          if (a.count === b.count) continue;
+          const dist = a.position.distanceTo(b.position);
+          if (dist < crowdRadius(a.count) + crowdRadius(b.count)) {
+            const winner = a.count > b.count ? a : b;
+            const loser = a.count > b.count ? b : a;
+            winner.count += loser.count;
+            scene.remove(loser.mesh);
+            rivalCrowds.splice(rivalCrowds.indexOf(loser), 1);
+            resolvedAny = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   function checkCollisions() {
     for (let i = rivalCrowds.length - 1; i >= 0; i--) {
       const r = rivalCrowds[i];
@@ -374,6 +405,7 @@ if (!canUseWebGL()) {
       resolveBuildingCollision(player.position, buildingCollisionRadius(player.count));
 
       rivalCrowds.forEach((r) => updateRivalAI(r, delta));
+      checkRivalVsRivalCollisions();
 
       checkCollisions();
 
