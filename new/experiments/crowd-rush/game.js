@@ -225,29 +225,7 @@ if (!canUseWebGL()) {
   }
   window.addEventListener('resize', resize);
 
-  // --- Pointer input: the crowd steers toward wherever you point/touch ---
-
-  const raycaster = new THREE.Raycaster();
-  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  const pointerNDC = new THREE.Vector2();
-  const pointerTarget = new THREE.Vector3(0, 0, 0);
-  let hasPointer = false;
-
-  function updatePointerTarget(clientX, clientY) {
-    pointerNDC.x = (clientX / window.innerWidth) * 2 - 1;
-    pointerNDC.y = -(clientY / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(pointerNDC, camera);
-    const hit = new THREE.Vector3();
-    if (raycaster.ray.intersectPlane(groundPlane, hit)) {
-      pointerTarget.copy(hit);
-      hasPointer = true;
-    }
-  }
-
-  window.addEventListener('pointermove', (e) => updatePointerTarget(e.clientX, e.clientY));
-  window.addEventListener('pointerdown', (e) => updatePointerTarget(e.clientX, e.clientY));
-
-  // --- Keyboard input: WASD / arrow keys override pointer-follow when held ---
+  // --- Keyboard input: WASD / arrow keys are the only movement control ---
 
   const keys = { up: false, down: false, left: false, right: false };
   const movementKeyCodes = new Set([
@@ -393,8 +371,6 @@ if (!canUseWebGL()) {
       if (keyDir) {
         player.position.x += keyDir.x * playerSpeed * delta;
         player.position.z += keyDir.z * playerSpeed * delta;
-      } else if (hasPointer) {
-        moveToward(player.position, pointerTarget, playerSpeed, delta);
       }
       resolveBuildingCollision(player.position, buildingCollisionRadius(player.count));
 
