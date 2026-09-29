@@ -58,49 +58,60 @@ if (!gl) {
   const vertexShader = compileShader(gl.VERTEX_SHADER, vertexSource);
   const fragmentShader = compileShader(gl.FRAGMENT_SHADER, fragmentSource);
 
-  const program = gl.createProgram();
-  gl.attachShader(program, vertexShader);
-  gl.attachShader(program, fragmentShader);
-  gl.linkProgram(program);
+  if (!vertexShader || !fragmentShader) {
+    document.body.innerHTML =
+      '<div class="fallback-message">This experiment needs WebGL2, which your browser doesn\'t support. Try a recent Chrome, Firefox, or Safari.</div>';
+  } else {
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
 
-  const positions = new Float32Array([-1, -1, 3, -1, -1, 3]);
-  const vao = gl.createVertexArray();
-  gl.bindVertexArray(vao);
-  const buffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(0);
-  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.error(gl.getProgramInfoLog(program));
+      document.body.innerHTML =
+        '<div class="fallback-message">This experiment needs WebGL2, which your browser doesn\'t support. Try a recent Chrome, Firefox, or Safari.</div>';
+    } else {
+      const positions = new Float32Array([-1, -1, 3, -1, -1, 3]);
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-  const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
-  const timeLoc = gl.getUniformLocation(program, 'u_time');
-  const mouseLoc = gl.getUniformLocation(program, 'u_mouse');
+      const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+      const timeLoc = gl.getUniformLocation(program, 'u_time');
+      const mouseLoc = gl.getUniformLocation(program, 'u_mouse');
 
-  let mouseX = 0.5;
-  let mouseY = 0.5;
+      let mouseX = 0.5;
+      let mouseY = 0.5;
 
-  window.addEventListener('mousemove', (e) => {
-    mouseX = e.clientX / window.innerWidth;
-    mouseY = 1.0 - e.clientY / window.innerHeight;
-  });
+      window.addEventListener('mousemove', (e) => {
+        mouseX = e.clientX / window.innerWidth;
+        mouseY = 1.0 - e.clientY / window.innerHeight;
+      });
 
-  function resize() {
-    canvas.width = window.innerWidth * window.devicePixelRatio;
-    canvas.height = window.innerHeight * window.devicePixelRatio;
-    gl.viewport(0, 0, canvas.width, canvas.height);
+      function resize() {
+        canvas.width = window.innerWidth * window.devicePixelRatio;
+        canvas.height = window.innerHeight * window.devicePixelRatio;
+        gl.viewport(0, 0, canvas.width, canvas.height);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      function render(timeMs) {
+        const time = timeMs * 0.001;
+        gl.useProgram(program);
+        gl.bindVertexArray(vao);
+        gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
+        gl.uniform1f(timeLoc, time);
+        gl.uniform2f(mouseLoc, mouseX, mouseY);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        requestAnimationFrame(render);
+      }
+      requestAnimationFrame(render);
+    }
   }
-  window.addEventListener('resize', resize);
-  resize();
-
-  function render(timeMs) {
-    const time = timeMs * 0.001;
-    gl.useProgram(program);
-    gl.bindVertexArray(vao);
-    gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
-    gl.uniform1f(timeLoc, time);
-    gl.uniform2f(mouseLoc, mouseX, mouseY);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    requestAnimationFrame(render);
-  }
-  requestAnimationFrame(render);
 }
