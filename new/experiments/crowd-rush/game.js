@@ -290,11 +290,21 @@ if (!canUseWebGL()) {
 
   // --- Camera follow ---
 
+  // Follows the actual leader soldier's physics body, not the logical
+  // WASD-driven position — the logical point moves at a flat, undamped
+  // speed and has no physical resistance, so it would otherwise steadily
+  // pull ahead of the real (steered, damped, collision-slowed) crowd and
+  // leave the camera looking at empty space in front of the group. The
+  // leader body is always player.bodies[0], part of the real simulation,
+  // so it can't outrun the crowd it belongs to.
   function updateCamera() {
     const behind = 14;
     const height = 16;
-    camera.position.set(player.position.x, height, player.position.z + behind);
-    camera.lookAt(player.position.x, 0, player.position.z - 4);
+    const leader = player.bodies[0];
+    const focusX = leader ? leader.position.x : player.position.x;
+    const focusZ = leader ? leader.position.z : player.position.z;
+    camera.position.set(focusX, height, focusZ + behind);
+    camera.lookAt(focusX, 0, focusZ - 4);
   }
   updateCamera();
 
@@ -534,7 +544,10 @@ if (!canUseWebGL()) {
         endRound("Time's Up!");
       }
 
-      const playerSpeed = 9;
+      // Kept close to (but slightly above) steerSpeed below, so the
+      // logical target leads the real crowd just enough to feel
+      // responsive without the gap growing large enough to be visible.
+      const playerSpeed = 6.5;
       const keyDir = keyboardDirection();
       const playerBlendRate = Math.min(1, delta * 4);
       player.moveBlend += ((keyDir ? 1 : 0) - player.moveBlend) * playerBlendRate;
