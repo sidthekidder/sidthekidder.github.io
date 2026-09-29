@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Crowd Rush — Experiments</title>
+<link rel="stylesheet" href="../../style.css">
+<style>
+  body { overflow: hidden; }
+  canvas { display: block; touch-action: none; }
+  .hud {
+    position: fixed;
+    top: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .hud-timer {
+    background: rgba(10, 10, 15, 0.7);
+    color: var(--fg);
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 1.2rem;
+    font-weight: 700;
+    min-width: 4.5rem;
+    text-align: center;
+  }
+  .hud-count {
+    background: rgba(124, 252, 174, 0.15);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 0.5rem 1.25rem;
+    border-radius: 8px;
+    font-size: 1.4rem;
+    font-weight: 700;
+  }
+  .leaderboard {
+    position: fixed;
+    top: 1.5rem;
+    right: 1.5rem;
+    z-index: 10;
+    background: rgba(10, 10, 15, 0.7);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+    min-width: 140px;
+    pointer-events: none;
+  }
+  .leaderboard div { display: flex; justify-content: space-between; gap: 1rem; padding: 0.15rem 0; }
+  .leaderboard .you { color: var(--accent); font-weight: 700; }
+  .end-screen {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 1rem;
+    background: rgba(10, 10, 15, 0.85);
+    z-index: 20;
+    text-align: center;
+  }
+  .end-screen.is-visible { display: flex; }
+  .end-title { font-size: 2.5rem; font-weight: 700; color: var(--fg); }
+  .end-score { font-size: 1.25rem; color: var(--muted); }
+  .end-button {
+    margin-top: 1rem;
+    background: var(--accent);
+    color: #0a0a0f;
+    border: none;
+    border-radius: 8px;
+    padding: 0.75rem 2rem;
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <a class="back-link" href="../../index.html">← back</a>
+  <div class="hud">
+    <div class="hud-timer" id="hud-timer">1:00</div>
+    <div class="hud-count" id="hud-count">5</div>
+  </div>
+  <div class="leaderboard" id="leaderboard"></div>
+  <div class="end-screen" id="end-screen">
+    <div class="end-title" id="end-title">Time's Up!</div>
+    <div class="end-score" id="end-score">Final size: 0</div>
+    <button class="end-button" id="play-again">Play Again</button>
+  </div>
+  <script type="module" src="game.js"></script>
+</body>
+</html>

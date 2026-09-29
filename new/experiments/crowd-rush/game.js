@@ -1,0 +1,357 @@
+import * as THREE from 'https://esm.sh/three@0.165.0';
+
+function canUseWebGL() {
+  try {
+    const testCanvas = document.createElement('canvas');
+    return !!(testCanvas.getContext('webgl2') || testCanvas.getContext('webgl'));
+  } catch (e) {
+    return false;
+  }
+}
+
+if (!canUseWebGL()) {
+  document.body.innerHTML =
+    '<a class="back-link" href="../../index.html">← back</a><div class="fallback-message">This experiment needs WebGL, which your browser doesn\'t support. Try a recent Chrome, Firefox, or Safari.</div>';
+} else {
+  const ARENA_HALF = 30;
+  const ROUND_SECONDS = 60;
+  const PLAYER_CAP = 500;
+
+  const hudTimer = document.getElementById('hud-timer');
+  const hudCount = document.getElementById('hud-count');
+  const leaderboardEl = document.getElementById('leaderboard');
+  const endScreen = document.getElementById('end-screen');
+  const endTitle = document.getElementById('end-title');
+  const endScore = document.getElementById('end-score');
+  const playAgainBtn = document.getElementById('play-again');
+
+  playAgainBtn.addEventListener('click', () => {
+    window.location.reload();
+  });
+
+  // --- Scene setup ---
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xbfc9d6);
+
+  const camera = new THREE.PerspectiveCamera(
+    50,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    200
+  );
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  document.body.appendChild(renderer.domElement);
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.1));
+  const sunLight = new THREE.DirectionalLight(0xffffff, 0.6);
+  sunLight.position.set(20, 30, 10);
+  scene.add(sunLight);
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(ARENA_HALF * 2 + 20, ARENA_HALF * 2 + 20),
+    new THREE.MeshLambertMaterial({ color: 0x9aa3ad })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+
+  // --- City blocks (solid obstacles) ---
+
+  const buildings = []; // { minX, maxX, minZ, maxZ }
+  const buildingColors = [0xf2d7a0, 0xa7c7e7, 0xf4a6a6, 0xb8e0c2];
+  const gridPositions = [-24, -12, 0, 12, 24];
+
+  gridPositions.forEach((bx) => {
+    gridPositions.forEach((bz) => {
+      if (bx === 0 && bz === 0) return; // keep the center plaza open as the start point
+      const size = 8;
+      const height = 4 + Math.random() * 6;
+      const color = buildingColors[Math.floor(Math.random() * buildingColors.length)];
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(size, height, size),
+        new THREE.MeshLambertMaterial({ color })
+      );
+      mesh.position.set(bx, height / 2, bz);
+      scene.add(mesh);
+      buildings.push({
+        minX: bx - size / 2,
+        maxX: bx + size / 2,
+        minZ: bz - size / 2,
+        maxZ: bz + size / 2,
+      });
+    });
+  });
+
+  function resolveBuildingCollision(position, radius) {
+    for (const b of buildings) {
+      const closestX = Math.max(b.minX, Math.min(position.x, b.maxX));
+      const closestZ = Math.max(b.minZ, Math.min(position.z, b.maxZ));
+      const dx = position.x - closestX;
+      const dz = position.z - closestZ;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < radius * radius) {
+        const dist = Math.sqrt(distSq) || 0.0001;
+        const push = radius - dist;
+        position.x += (dx / dist) * push;
+        position.z += (dz / dist) * push;
+      }
+    }
+    position.x = Math.max(-ARENA_HALF, Math.min(ARENA_HALF, position.x));
+    position.z = Math.max(-ARENA_HALF, Math.min(ARENA_HALF, position.z));
+  }
+
+  function randomRoadPosition(pushRadius) {
+    const pos = new THREE.Vector3(
+      (Math.random() * 2 - 1) * ARENA_HALF,
+      0,
+      (Math.random() * 2 - 1) * ARENA_HALF
+    );
+    resolveBuildingCollision(pos, pushRadius);
+    return pos;
+  }
+
+  // --- Crowd helpers ---
+
+  const personGeometry = new THREE.ConeGeometry(0.28, 0.9, 6);
+
+  function crowdRadius(count) {
+    return 0.6 + Math.sqrt(count) * 0.35;
+  }
+
+  function layoutFormation(mesh, count, centerX, centerZ) {
+    const dummy = new THREE.Object3D();
+    let placed = 0;
+    let ring = 0;
+    while (placed < count) {
+      const ringCapacity = ring === 0 ? 1 : ring * 6;
+      const ringRadius = ring * 0.55;
+      for (let i = 0; i < ringCapacity && placed < count; i++) {
+        const angle = (i / ringCapacity) * Math.PI * 2 + ring * 0.3;
+        const x = centerX + Math.cos(angle) * ringRadius;
+        const z = centerZ + Math.sin(angle) * ringRadius;
+        dummy.position.set(x, 0.45, z);
+        dummy.rotation.y = angle;
+        dummy.updateMatrix();
+        mesh.setMatrixAt(placed, dummy.matrix);
+        placed++;
+      }
+      ring++;
+    }
+    mesh.count = count;
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  function makeCrowdMesh(color, capacity) {
+    const material = new THREE.MeshLambertMaterial({ color });
+    const mesh = new THREE.InstancedMesh(personGeometry, material, capacity);
+    scene.add(mesh);
+    return mesh;
+  }
+
+  // --- Player ---
+
+  const player = {
+    position: new THREE.Vector3(0, 0, 0),
+    count: 5,
+    mesh: makeCrowdMesh(0x3a7bd5, PLAYER_CAP),
+  };
+  layoutFormation(player.mesh, player.count, player.position.x, player.position.z);
+
+  // --- Neutral crowds (always join on contact) ---
+
+  const neutralCrowds = [];
+  for (let i = 0; i < 10; i++) {
+    const count = 5 + Math.floor(Math.random() * 26);
+    const pos = randomRoadPosition(crowdRadius(count));
+    const mesh = makeCrowdMesh(0xf4f4f8, count);
+    layoutFormation(mesh, count, pos.x, pos.z);
+    neutralCrowds.push({ position: pos, count, mesh });
+  }
+
+  // --- Rival crowds (bigger absorbs smaller on contact) ---
+
+  const rivalColors = [0xe15554, 0xff8c42, 0x9b5de5];
+  const rivalNames = ['Redcoat', 'Blazer', 'Violet'];
+  const rivalCrowds = [];
+
+  for (let i = 0; i < 3; i++) {
+    const count = 15 + Math.floor(Math.random() * 16);
+    const pos = randomRoadPosition(crowdRadius(count));
+    const mesh = makeCrowdMesh(rivalColors[i], 200);
+    layoutFormation(mesh, count, pos.x, pos.z);
+    rivalCrowds.push({
+      name: rivalNames[i],
+      position: pos,
+      count,
+      mesh,
+      wanderTarget: pos.clone(),
+      wanderTimer: 0,
+    });
+  }
+
+  // --- Camera follow ---
+
+  function updateCamera() {
+    const behind = 14;
+    const height = 16;
+    camera.position.set(player.position.x, height, player.position.z + behind);
+    camera.lookAt(player.position.x, 0, player.position.z - 4);
+  }
+  updateCamera();
+
+  function resize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+  window.addEventListener('resize', resize);
+
+  // --- Pointer input: the crowd steers toward wherever you point/touch ---
+
+  const raycaster = new THREE.Raycaster();
+  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const pointerNDC = new THREE.Vector2();
+  const pointerTarget = new THREE.Vector3(0, 0, 0);
+  let hasPointer = false;
+
+  function updatePointerTarget(clientX, clientY) {
+    pointerNDC.x = (clientX / window.innerWidth) * 2 - 1;
+    pointerNDC.y = -(clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(pointerNDC, camera);
+    const hit = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(groundPlane, hit)) {
+      pointerTarget.copy(hit);
+      hasPointer = true;
+    }
+  }
+
+  window.addEventListener('pointermove', (e) => updatePointerTarget(e.clientX, e.clientY));
+  window.addEventListener('pointerdown', (e) => updatePointerTarget(e.clientX, e.clientY));
+
+  // --- Game state / loop ---
+
+  let timeLeft = ROUND_SECONDS;
+  let gameOver = false;
+  const clock = new THREE.Clock();
+
+  function formatTime(seconds) {
+    const s = Math.max(0, Math.ceil(seconds));
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return `${m}:${rem.toString().padStart(2, '0')}`;
+  }
+
+  function endRound(title) {
+    if (gameOver) return;
+    gameOver = true;
+    endTitle.textContent = title;
+    endScore.textContent = `Final size: ${player.count}`;
+    endScreen.classList.add('is-visible');
+  }
+
+  function updateLeaderboard() {
+    const entries = [{ name: 'You', count: player.count, you: true }].concat(
+      rivalCrowds.map((r) => ({ name: r.name, count: r.count, you: false }))
+    );
+    entries.sort((a, b) => b.count - a.count);
+    leaderboardEl.innerHTML = entries
+      .slice(0, 4)
+      .map(
+        (e) =>
+          `<div class="${e.you ? 'you' : ''}"><span>${e.name}</span><span>${e.count}</span></div>`
+      )
+      .join('');
+  }
+
+  function moveToward(position, target, speed, delta) {
+    const dx = target.x - position.x;
+    const dz = target.z - position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < 0.05) return;
+    const step = Math.min(dist, speed * delta);
+    position.x += (dx / dist) * step;
+    position.z += (dz / dist) * step;
+  }
+
+  function updateRivalAI(rival, delta) {
+    rival.wanderTimer -= delta;
+    if (rival.wanderTimer <= 0) {
+      rival.wanderTarget = randomRoadPosition(crowdRadius(rival.count));
+      rival.wanderTimer = 2 + Math.random() * 3;
+    }
+    moveToward(rival.position, rival.wanderTarget, 3.5, delta);
+    resolveBuildingCollision(rival.position, crowdRadius(rival.count));
+  }
+
+  function checkCollisions() {
+    for (let i = neutralCrowds.length - 1; i >= 0; i--) {
+      const n = neutralCrowds[i];
+      const dist = player.position.distanceTo(n.position);
+      if (dist < crowdRadius(player.count) + crowdRadius(n.count)) {
+        player.count += n.count;
+        scene.remove(n.mesh);
+        neutralCrowds.splice(i, 1);
+      }
+    }
+
+    for (let i = rivalCrowds.length - 1; i >= 0; i--) {
+      const r = rivalCrowds[i];
+      const dist = player.position.distanceTo(r.position);
+      if (dist < crowdRadius(player.count) + crowdRadius(r.count)) {
+        if (player.count > r.count) {
+          player.count += r.count;
+          scene.remove(r.mesh);
+          rivalCrowds.splice(i, 1);
+        } else if (r.count > player.count) {
+          scene.remove(r.mesh);
+          rivalCrowds.splice(i, 1);
+          endRound('Defeated!');
+          return;
+        }
+      }
+    }
+  }
+
+  function animate() {
+    const delta = Math.min(clock.getDelta(), 0.1);
+
+    if (!gameOver) {
+      timeLeft -= delta;
+      if (timeLeft <= 0) {
+        timeLeft = 0;
+        endRound("Time's Up!");
+      }
+
+      if (hasPointer) {
+        moveToward(player.position, pointerTarget, 9, delta);
+      }
+      resolveBuildingCollision(player.position, crowdRadius(player.count));
+
+      rivalCrowds.forEach((r) => updateRivalAI(r, delta));
+
+      checkCollisions();
+
+      layoutFormation(
+        player.mesh,
+        Math.min(player.count, PLAYER_CAP),
+        player.position.x,
+        player.position.z
+      );
+      rivalCrowds.forEach((r) => layoutFormation(r.mesh, r.count, r.position.x, r.position.z));
+
+      hudTimer.textContent = formatTime(timeLeft);
+      hudCount.textContent = String(player.count);
+      updateLeaderboard();
+      updateCamera();
+    }
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+  }
+
+  updateLeaderboard();
+  animate();
+}
