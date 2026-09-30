@@ -123,32 +123,82 @@ if (!canUseWebGL()) {
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
 
-  // --- City blocks (solid obstacles) ---
-  // No physics engine involved: groups avoid buildings with the same
-  // cheap AABB push-out used for the logical leader position below.
+  // --- City blocks: a different mix of buildings/parks/open plazas every
+  // time the page loads (Play Again reloads the page, so every round gets
+  // a fresh layout for free). No physics engine involved: groups avoid
+  // buildings with the same cheap AABB push-out used for the logical
+  // leader position below; parks and open cells have no collision at all.
 
-  const buildings = []; // { minX, maxX, minZ, maxZ }
+  const buildings = []; // { minX, maxX, minZ, maxZ } — buildings only
   const buildingColors = [0xf2d7a0, 0xa7c7e7, 0xf4a6a6, 0xb8e0c2];
   const gridPositions = [-24, -12, 0, 12, 24];
 
+  function makeTree(x, z) {
+    const trunkHeight = 0.6 + Math.random() * 0.3;
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, 0.1, trunkHeight, 6),
+      new THREE.MeshLambertMaterial({ color: 0x8b6b4a })
+    );
+    trunk.position.set(x, trunkHeight / 2, z);
+    scene.add(trunk);
+
+    const foliageHeight = 1.2 + Math.random() * 0.6;
+    const foliage = new THREE.Mesh(
+      new THREE.ConeGeometry(0.55 + Math.random() * 0.2, foliageHeight, 7),
+      new THREE.MeshLambertMaterial({ color: 0x4a8f5c })
+    );
+    foliage.position.set(x, trunkHeight + foliageHeight / 2 - 0.05, z);
+    scene.add(foliage);
+  }
+
+  function makeParkCell(bx, bz, size) {
+    const patch = new THREE.Mesh(
+      new THREE.PlaneGeometry(size, size),
+      new THREE.MeshLambertMaterial({ color: 0x8fd18f })
+    );
+    patch.rotation.x = -Math.PI / 2;
+    patch.position.set(bx, 0.02, bz); // just above the road plane, avoids z-fighting
+    scene.add(patch);
+
+    const treeCount = 2 + Math.floor(Math.random() * 3);
+    for (let t = 0; t < treeCount; t++) {
+      const tx = bx + (Math.random() - 0.5) * (size - 1.5);
+      const tz = bz + (Math.random() - 0.5) * (size - 1.5);
+      makeTree(tx, tz);
+    }
+  }
+
+  // Weighted so most cells are still buildings (keeps the "city" feel and
+  // enough obstacles for navigation to matter), with parks and open
+  // plazas mixed in for visual variety and breathing room.
   gridPositions.forEach((bx) => {
     gridPositions.forEach((bz) => {
       if (bx === 0 && bz === 0) return; // keep the center plaza open as the start point
-      const size = 8;
-      const height = 4 + Math.random() * 6;
-      const color = buildingColors[Math.floor(Math.random() * buildingColors.length)];
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(size, height, size),
-        new THREE.MeshLambertMaterial({ color, transparent: true, opacity: 0.55 })
-      );
-      mesh.position.set(bx, height / 2, bz);
-      scene.add(mesh);
-      buildings.push({
-        minX: bx - size / 2,
-        maxX: bx + size / 2,
-        minZ: bz - size / 2,
-        maxZ: bz + size / 2,
-      });
+
+      const roll = Math.random();
+      if (roll < 0.55) {
+        // Varied footprint size (not a fixed 8) so blocks don't all read
+        // as identical cubes — a small step toward the "randomly combine
+        // squares" building-size variation real city generators use.
+        const size = 5 + Math.random() * 3;
+        const height = 4 + Math.random() * 6;
+        const color = buildingColors[Math.floor(Math.random() * buildingColors.length)];
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(size, height, size),
+          new THREE.MeshLambertMaterial({ color, transparent: true, opacity: 0.55 })
+        );
+        mesh.position.set(bx, height / 2, bz);
+        scene.add(mesh);
+        buildings.push({
+          minX: bx - size / 2,
+          maxX: bx + size / 2,
+          minZ: bz - size / 2,
+          maxZ: bz + size / 2,
+        });
+      } else if (roll < 0.78) {
+        makeParkCell(bx, bz, 7);
+      }
+      // else (22%): open plaza — left empty, widens the road network there
     });
   });
 
@@ -364,11 +414,26 @@ if (!canUseWebGL()) {
   // camera off if the rest of the crowd has moved on.
   const cameraCentroidScratch = { x: 0, z: 0 };
 
-  function updateCamera() {
-    const behind = 14;
-    const height = 16;
+  // Dollies out as the crowd grows (based on the same crowdRadius used for
+  // capture range), eased over time rather than snapped, so a big absorb
+  // doesn't yank the camera back in one frame. `delta` is optional so the
+  // very first call (before the render loop starts) can snap straight to
+  // the correct starting zoom instead of easing in from 1x.
+  let cameraZoom = 1;
+
+  function updateCamera(delta) {
+    const baseBehind = 14;
+    const baseHeight = 16;
     const centroid = crowdCentroid(player, cameraCentroidScratch);
-    camera.position.set(centroid.x, height, centroid.z + behind);
+
+    const targetZoom = Math.min(
+      2,
+      1 + Math.max(0, crowdRadius(player.count) - crowdRadius(15)) * 0.12
+    );
+    const zoomEase = Math.min(1, (delta === undefined ? 1 : delta) * 2);
+    cameraZoom += (targetZoom - cameraZoom) * zoomEase;
+
+    camera.position.set(centroid.x, baseHeight * cameraZoom, centroid.z + baseBehind * cameraZoom);
     camera.lookAt(centroid.x, 0, centroid.z - 4);
   }
   updateCamera();
@@ -905,7 +970,7 @@ if (!canUseWebGL()) {
       hudTimer.textContent = formatTime(timeLeft);
       hudCount.textContent = String(player.count);
       updateLeaderboard();
-      updateCamera();
+      updateCamera(delta);
     }
 
     // Outside the !gameOver gate so a burst spawned on the frame the
