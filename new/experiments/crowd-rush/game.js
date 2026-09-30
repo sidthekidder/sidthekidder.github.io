@@ -201,6 +201,23 @@ if (!canUseWebGL()) {
     };
   }
 
+  // The crowd's real visual center — the average of where its soldiers'
+  // physics bodies actually are, not the abstract WASD-driven intent
+  // point (crowd.position). Used for anything that should reflect what's
+  // actually on screen: collision/contact checks and the camera. Left
+  // pure and cheap (called at most ~11 times per frame across all crowds
+  // put together) rather than cached, so it's always exactly correct.
+  function crowdCentroid(crowd) {
+    let sumX = 0;
+    let sumZ = 0;
+    crowd.bodies.forEach((body) => {
+      sumX += body.position.x;
+      sumZ += body.position.z;
+    });
+    const n = crowd.bodies.length || 1;
+    return { x: sumX / n, z: sumZ / n };
+  }
+
   function makeSoldierBody(x, z) {
     const body = new CANNON.Body({
       mass: 1,
@@ -290,21 +307,20 @@ if (!canUseWebGL()) {
 
   // --- Camera follow ---
 
-  // Follows the actual leader soldier's physics body, not the logical
+  // Follows the crowd's actual visual centroid, not the logical
   // WASD-driven position — the logical point moves at a flat, undamped
-  // speed and has no physical resistance, so it would otherwise steadily
+  // speed with no physical resistance, so it would otherwise steadily
   // pull ahead of the real (steered, damped, collision-slowed) crowd and
-  // leave the camera looking at empty space in front of the group. The
-  // leader body is always player.bodies[0], part of the real simulation,
-  // so it can't outrun the crowd it belongs to.
+  // leave the camera looking at empty space in front of the group. Using
+  // the centroid of every real body (rather than just the leader) also
+  // means one stuck straggler can't drag the camera off if the rest of
+  // the crowd has moved on.
   function updateCamera() {
     const behind = 14;
     const height = 16;
-    const leader = player.bodies[0];
-    const focusX = leader ? leader.position.x : player.position.x;
-    const focusZ = leader ? leader.position.z : player.position.z;
-    camera.position.set(focusX, height, focusZ + behind);
-    camera.lookAt(focusX, 0, focusZ - 4);
+    const centroid = crowdCentroid(player);
+    camera.position.set(centroid.x, height, centroid.z + behind);
+    camera.lookAt(centroid.x, 0, centroid.z - 4);
   }
   updateCamera();
 
@@ -513,7 +529,9 @@ if (!canUseWebGL()) {
         for (let j = i + 1; j < rivalCrowds.length; j++) {
           const a = rivalCrowds[i];
           const b = rivalCrowds[j];
-          const dist = a.position.distanceTo(b.position);
+          const centroidA = crowdCentroid(a);
+          const centroidB = crowdCentroid(b);
+          const dist = Math.hypot(centroidA.x - centroidB.x, centroidA.z - centroidB.z);
           if (dist < crowdRadius(a.count) + crowdRadius(b.count)) {
             const winner = a.count >= b.count ? a : b;
             const loser = a.count >= b.count ? b : a;
@@ -530,9 +548,14 @@ if (!canUseWebGL()) {
   }
 
   function checkCollisions() {
+    const playerCentroid = crowdCentroid(player);
     for (let i = rivalCrowds.length - 1; i >= 0; i--) {
       const r = rivalCrowds[i];
-      const dist = player.position.distanceTo(r.position);
+      const rivalCentroid = crowdCentroid(r);
+      const dist = Math.hypot(
+        playerCentroid.x - rivalCentroid.x,
+        playerCentroid.z - rivalCentroid.z
+      );
       if (dist < crowdRadius(player.count) + crowdRadius(r.count)) {
         if (player.count >= r.count) {
           player.bodies = player.bodies.concat(r.bodies);
@@ -558,6 +581,15 @@ if (!canUseWebGL()) {
   // Sets each soldier's steering intent (velocity toward its formation
   // slot) before the physics step — the solver has the final say on
   // actual motion once collisions with neighbors/buildings are resolved.
+  //
+  // LEASH_DISTANCE is a hard cap: the largest formation ring in a
+  // realistically-sized crowd sits around ~4.4 units out, so anything
+  // past 6 isn't a formation member running to catch up, it's a
+  // straggler stuck on a building or lost after an absorb — snap it
+  // straight back rather than let it drift indefinitely and spread the
+  // crowd out further than the collision radius actually represents.
+  const LEASH_DISTANCE = 6;
+
   function steerCrowd(crowd) {
     const steerSpeed = 6;
     crowd.bodies.forEach((body, i) => {
@@ -571,7 +603,12 @@ if (!canUseWebGL()) {
       const dx = slot.x - body.position.x;
       const dz = slot.z - body.position.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist > 0.02) {
+      if (dist > LEASH_DISTANCE) {
+        body.position.x = slot.x + (Math.random() - 0.5) * 0.3;
+        body.position.z = slot.z + (Math.random() - 0.5) * 0.3;
+        body.velocity.x = 0;
+        body.velocity.z = 0;
+      } else if (dist > 0.02) {
         const speed = Math.min(steerSpeed, dist * 8);
         body.velocity.x = (dx / dist) * speed;
         body.velocity.z = (dz / dist) * speed;
