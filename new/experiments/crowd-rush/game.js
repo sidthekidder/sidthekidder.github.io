@@ -69,6 +69,13 @@ if (!canUseWebGL()) {
   // verified against real frame-rate in a browser.
 
   const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
+  // More solver iterations = stiffer contact resolution — soldiers push
+  // apart cleanly instead of sinking into each other and springing back.
+  world.solver.iterations = 20;
+  // Low restitution keeps jostles from bouncing/jittering; moderate
+  // friction stops soldiers sliding past each other after a knock.
+  world.defaultContactMaterial.restitution = 0.05;
+  world.defaultContactMaterial.friction = 0.4;
 
   const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
   groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
@@ -206,7 +213,10 @@ if (!canUseWebGL()) {
       mass: 1,
       shape: new CANNON.Sphere(SOLDIER_RADIUS),
       position: new CANNON.Vec3(x, 0.5 + Math.random() * 0.5, z),
-      linearDamping: 0.85,
+      // Lower than before: high damping was killing collision-induced
+      // velocity almost instantly, so a jostle never had time to read as
+      // actual displacement before it got absorbed away.
+      linearDamping: 0.5,
       fixedRotation: true,
     });
     world.addBody(body);
@@ -488,8 +498,16 @@ if (!canUseWebGL()) {
   // Sets each soldier's steering intent (velocity toward its formation
   // slot) before the physics step — the solver has the final say on
   // actual motion once collisions with neighbors/buildings are resolved.
+  //
+  // This BLENDS toward the desired velocity rather than snapping to it
+  // (steerResponsiveness < 1). A hard set here would completely erase
+  // whatever knockback velocity a collision just produced before the
+  // solver's result ever gets a chance to read on screen — the jostle
+  // would be computed correctly but visually disappear every frame.
+  // Blending lets a knock persist and decay over several frames instead.
   function steerCrowd(crowd) {
     const steerSpeed = 6;
+    const steerResponsiveness = 0.3;
     crowd.bodies.forEach((body, i) => {
       const slot = computeSlotPosition(
         i,
@@ -503,8 +521,10 @@ if (!canUseWebGL()) {
       const dist = Math.sqrt(dx * dx + dz * dz);
       if (dist > 0.02) {
         const speed = Math.min(steerSpeed, dist * 8);
-        body.velocity.x = (dx / dist) * speed;
-        body.velocity.z = (dz / dist) * speed;
+        const desiredVX = (dx / dist) * speed;
+        const desiredVZ = (dz / dist) * speed;
+        body.velocity.x += (desiredVX - body.velocity.x) * steerResponsiveness;
+        body.velocity.z += (desiredVZ - body.velocity.z) * steerResponsiveness;
       } else {
         body.velocity.x *= 0.5;
         body.velocity.z *= 0.5;
