@@ -421,14 +421,19 @@ if (!canUseWebGL()) {
   // the correct starting zoom instead of easing in from 1x.
   let cameraZoom = 1;
 
-  function updateCamera(delta) {
+  // `target` defaults to the player — but during the defeat sequence
+  // (see pendingDefeat in animate()) the camera follows whichever rival
+  // just absorbed the player instead, since player.groups is empty by
+  // then and would otherwise centroid to nothing.
+  function updateCamera(target, delta) {
+    const crowd = target || player;
     const baseBehind = 14;
     const baseHeight = 16;
-    const centroid = crowdCentroid(player, cameraCentroidScratch);
+    const centroid = crowdCentroid(crowd, cameraCentroidScratch);
 
     const targetZoom = Math.min(
       2,
-      1 + Math.max(0, crowdRadius(player.count) - crowdRadius(15)) * 0.12
+      1 + Math.max(0, crowdRadius(crowd.count) - crowdRadius(15)) * 0.12
     );
     const zoomEase = Math.min(1, (delta === undefined ? 1 : delta) * 2);
     cameraZoom += (targetZoom - cameraZoom) * zoomEase;
@@ -574,6 +579,13 @@ if (!canUseWebGL()) {
   let gameOver = false;
   const clock = new THREE.Clock();
 
+  // When the player loses, instead of freezing instantly: the player's
+  // groups transfer into the winning rival (visually "converting" into
+  // its crowd/color) and the camera follows that rival for DEFEAT_DELAY
+  // seconds before the end screen actually shows.
+  const DEFEAT_DELAY = 1;
+  let pendingDefeat = null; // { rival, timer } while the sequence plays out
+
   function formatTime(seconds) {
     const s = Math.max(0, Math.ceil(seconds));
     const m = Math.floor(s / 60);
@@ -695,9 +707,17 @@ if (!canUseWebGL()) {
           rivalCrowds.splice(i, 1);
         } else {
           spawnBurst(playerCentroid.x, playerCentroid.z, 0xff4d4d);
-          scene.remove(r.mesh);
-          rivalCrowds.splice(i, 1);
-          endRound('Defeated!');
+          // Player's groups visually convert into the winning rival's
+          // crowd instead of just vanishing — r keeps existing (not
+          // removed/spliced) so it can keep rendering them merging in
+          // during the DEFEAT_DELAY window below. player.count is left
+          // untouched: endRound's "Final size" reads it, and zeroing it
+          // here would show 0 instead of the size you actually reached.
+          const absorbedGroups = player.groups;
+          r.groups = r.groups.concat(absorbedGroups);
+          r.count += player.count;
+          player.groups = [];
+          pendingDefeat = { rival: r, timer: DEFEAT_DELAY };
           return;
         }
       }
@@ -785,17 +805,6 @@ if (!canUseWebGL()) {
 
   const slotScratch = { x: 0, z: 0 };
 
-  // LEASH_DISTANCE is a last-resort hard cap: the largest formation ring
-  // in a realistically-sized crowd sits around ~4.4 units out, so
-  // anything past 6 is treated as truly stuck (e.g. pinned by a building
-  // corner) rather than a group that's merely behind — snap it straight
-  // back rather than let it drift indefinitely. With the catch-up speed
-  // boost below, a normal straggler should almost never reach this: it
-  // should visibly race back into formation well before then instead of
-  // camera-following-centroid leaving it off-screen to drift unseen until
-  // it suddenly teleports back into view.
-  const LEASH_DISTANCE = 6;
-
   // Base steering speed once within CATCHUP_START of the target slot.
   // Beyond that, speed ramps up with distance (capped at CATCHUP_MAX_SPEED)
   // so a group that's fallen behind sprints back rather than crawling at
@@ -832,26 +841,25 @@ if (!canUseWebGL()) {
       const dz = slot.z - group.position.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
 
-      if (dist > LEASH_DISTANCE) {
-        group.position.x = slot.x + (Math.random() - 0.5) * 0.3;
-        group.position.z = slot.z + (Math.random() - 0.5) * 0.3;
-        group.velocity.x = 0;
-        group.velocity.z = 0;
-      } else {
-        let steerX = 0;
-        let steerZ = 0;
-        if (dist > 0.02) {
-          const speed = Math.min(steerSpeedForDistance(dist), dist * 8);
-          steerX = (dx / dist) * speed;
-          steerZ = (dz / dist) * speed;
-        }
-        const sep = computeSeparation(group, hash, separationScratch);
-        group.velocity.x = steerX + sep.x;
-        group.velocity.z = steerZ + sep.z;
-        group.position.x += group.velocity.x * delta;
-        group.position.z += group.velocity.z * delta;
-        resolveBuildingCollision(group.position, GROUP_RADIUS);
+      // No teleport/snap fallback: however far behind a group has fallen,
+      // it always moves there continuously — steerSpeedForDistance's
+      // catch-up ramp (capped at CATCHUP_MAX_SPEED) is the only recovery
+      // mechanism now. A group can in principle stay stuck longer against
+      // an awkward building corner than it could before, but it will
+      // never visibly pop from one position to another.
+      let steerX = 0;
+      let steerZ = 0;
+      if (dist > 0.02) {
+        const speed = Math.min(steerSpeedForDistance(dist), dist * 8);
+        steerX = (dx / dist) * speed;
+        steerZ = (dz / dist) * speed;
       }
+      const sep = computeSeparation(group, hash, separationScratch);
+      group.velocity.x = steerX + sep.x;
+      group.velocity.z = steerZ + sep.z;
+      group.position.x += group.velocity.x * delta;
+      group.position.z += group.velocity.z * delta;
+      resolveBuildingCollision(group.position, GROUP_RADIUS);
       individualIndex += group.size;
     });
   }
@@ -932,7 +940,34 @@ if (!canUseWebGL()) {
     const delta = Math.min(clock.getDelta(), 0.1);
     elapsedTime += delta;
 
-    if (!gameOver) {
+    if (pendingDefeat) {
+      // The 1-second "your crowd converts into the winner" beat: normal
+      // gameplay (input, rival AI, timer, collision checks) is paused —
+      // only motion/rendering keeps running so the just-absorbed player
+      // groups visibly merge into pendingDefeat.rival's formation, with
+      // the camera following that rival instead of the now-empty player.
+      pendingDefeat.timer -= delta;
+
+      let allGroups = player.groups;
+      rivalCrowds.forEach((r) => {
+        allGroups = allGroups.concat(r.groups);
+      });
+      const hash = buildSpatialHash(allGroups);
+
+      updateCrowdMotion(player, hash, delta); // no-op: player.groups is empty
+      rivalCrowds.forEach((r) => updateCrowdMotion(r, hash, delta));
+
+      renderCrowd(player);
+      rivalCrowds.forEach((r) => renderCrowd(r));
+
+      updateLeaderboard();
+      updateCamera(pendingDefeat.rival, delta);
+
+      if (pendingDefeat.timer <= 0) {
+        pendingDefeat = null;
+        endRound('Defeated!');
+      }
+    } else if (!gameOver) {
       timeLeft -= delta;
       if (timeLeft <= 0) {
         timeLeft = 0;
@@ -955,22 +990,29 @@ if (!canUseWebGL()) {
 
       checkCollisions();
 
-      let allGroups = player.groups;
-      rivalCrowds.forEach((r) => {
-        allGroups = allGroups.concat(r.groups);
-      });
-      const hash = buildSpatialHash(allGroups);
+      // checkCollisions may have just set pendingDefeat (and cleared
+      // player.groups) as a side effect — skip the rest of this frame's
+      // normal-path rendering/camera in that case so updateCamera doesn't
+      // centroid an empty player crowd to world origin for one frame
+      // before the pendingDefeat branch takes over next frame.
+      if (!pendingDefeat) {
+        let allGroups = player.groups;
+        rivalCrowds.forEach((r) => {
+          allGroups = allGroups.concat(r.groups);
+        });
+        const hash = buildSpatialHash(allGroups);
 
-      updateCrowdMotion(player, hash, delta);
-      rivalCrowds.forEach((r) => updateCrowdMotion(r, hash, delta));
+        updateCrowdMotion(player, hash, delta);
+        rivalCrowds.forEach((r) => updateCrowdMotion(r, hash, delta));
 
-      renderCrowd(player);
-      rivalCrowds.forEach((r) => renderCrowd(r));
+        renderCrowd(player);
+        rivalCrowds.forEach((r) => renderCrowd(r));
 
-      hudTimer.textContent = formatTime(timeLeft);
-      hudCount.textContent = String(player.count);
-      updateLeaderboard();
-      updateCamera(delta);
+        hudTimer.textContent = formatTime(timeLeft);
+        hudCount.textContent = String(player.count);
+        updateLeaderboard();
+        updateCamera(player, delta);
+      }
     }
 
     // Outside the !gameOver gate so a burst spawned on the frame the
