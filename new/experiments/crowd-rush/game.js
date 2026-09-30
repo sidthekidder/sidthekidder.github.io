@@ -35,6 +35,65 @@ if (!canUseWebGL()) {
     window.location.reload();
   });
 
+  // --- Sound ---
+  // Synthesized with plain oscillators (no audio asset files, fitting the
+  // rest of this page's no-build-step approach). Browsers require a user
+  // gesture before an AudioContext can actually produce sound, so every
+  // play function resumes it defensively — by the time any of these fire
+  // the player has already pressed a movement key or touched the
+  // joystick, but this covers the edge case cheaply either way.
+
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  function ensureAudioResumed() {
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+  }
+
+  function playTone(freqStart, freqEnd, duration, type, volume) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    const now = audioCtx.currentTime;
+    osc.frequency.setValueAtTime(freqStart, now);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(freqEnd, 1), now + duration);
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + duration);
+  }
+
+  function playAbsorbSound() {
+    ensureAudioResumed();
+    playTone(320, 720, 0.12, 'triangle', 0.15);
+  }
+
+  function playDefeatSound() {
+    ensureAudioResumed();
+    playTone(420, 110, 0.35, 'sawtooth', 0.2);
+  }
+
+  function playVictorySound() {
+    ensureAudioResumed();
+    const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
+    notes.forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const startTime = audioCtx.currentTime + i * 0.1;
+      gain.gain.setValueAtTime(0.18, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.25);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(startTime);
+      osc.stop(startTime + 0.25);
+    });
+  }
+
   // --- Scene setup ---
 
   const scene = new THREE.Scene();
@@ -282,6 +341,7 @@ if (!canUseWebGL()) {
     const groups = spawnGroups(count, pos.x, pos.z);
     rivalCrowds.push({
       name: rivalNames[i],
+      color: rivalColors[i],
       position: pos,
       count,
       facing: 0,
@@ -462,6 +522,11 @@ if (!canUseWebGL()) {
     endTitle.textContent = title;
     endScore.textContent = `Final size: ${player.count}`;
     endScreen.classList.add('is-visible');
+    if (title === 'Defeated!') {
+      playDefeatSound();
+    } else {
+      playVictorySound();
+    }
   }
 
   function updateLeaderboard() {
@@ -529,6 +594,8 @@ if (!canUseWebGL()) {
           if (dist < crowdRadius(a.count) + crowdRadius(b.count)) {
             const winner = a.count >= b.count ? a : b;
             const loser = a.count >= b.count ? b : a;
+            const loserCentroid = a.count >= b.count ? centroids[j] : centroids[i];
+            spawnBurst(loserCentroid.x, loserCentroid.z, loser.color);
             winner.groups = winner.groups.concat(loser.groups);
             winner.count += loser.count;
             scene.remove(loser.mesh);
@@ -555,11 +622,14 @@ if (!canUseWebGL()) {
       );
       if (dist < crowdRadius(player.count) + crowdRadius(r.count)) {
         if (player.count >= r.count) {
+          spawnBurst(rivalCentroid.x, rivalCentroid.z, r.color);
+          playAbsorbSound();
           player.groups = player.groups.concat(r.groups);
           player.count += r.count;
           scene.remove(r.mesh);
           rivalCrowds.splice(i, 1);
         } else {
+          spawnBurst(playerCentroid.x, playerCentroid.z, 0xff4d4d);
           scene.remove(r.mesh);
           rivalCrowds.splice(i, 1);
           endRound('Defeated!');
@@ -702,6 +772,50 @@ if (!canUseWebGL()) {
     });
   }
 
+  // --- Contact bursts ---
+  // A quick expanding, fading ring dropped at the contact point on every
+  // absorption (player or rival-vs-rival), tinted with whichever crowd
+  // just got absorbed. Each burst is a short-lived Three.js mesh tracked
+  // in activeBursts and cleaned up (removed + disposed) once its
+  // animation finishes, so nothing accumulates over a round.
+
+  const activeBursts = [];
+  const BURST_DURATION = 0.45;
+  const BURST_MAX_SCALE = 4;
+
+  function spawnBurst(x, z, color) {
+    const geometry = new THREE.RingGeometry(0.3, 0.5, 20);
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(x, 0.4, z);
+    scene.add(mesh);
+    activeBursts.push({ mesh, material, age: 0 });
+  }
+
+  function updateBursts(delta) {
+    for (let i = activeBursts.length - 1; i >= 0; i--) {
+      const burst = activeBursts[i];
+      burst.age += delta;
+      const t = Math.min(1, burst.age / BURST_DURATION);
+      const scale = 1 + t * (BURST_MAX_SCALE - 1);
+      burst.mesh.scale.set(scale, scale, scale);
+      burst.material.opacity = 0.9 * (1 - t);
+      if (t >= 1) {
+        scene.remove(burst.mesh);
+        burst.mesh.geometry.dispose();
+        burst.material.dispose();
+        activeBursts.splice(i, 1);
+      }
+    }
+  }
+
   const dummy = new THREE.Object3D();
 
   // Writes GROUP_SIZE instances per group into the crowd's InstancedMesh
@@ -774,6 +888,11 @@ if (!canUseWebGL()) {
       updateLeaderboard();
       updateCamera();
     }
+
+    // Outside the !gameOver gate so a burst spawned on the frame the
+    // round ends (a defeat or a final absorb) still finishes its
+    // animation instead of freezing mid-fade.
+    updateBursts(delta);
 
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
