@@ -69,9 +69,12 @@ if (!canUseWebGL()) {
   // verified against real frame-rate in a browser.
 
   const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
-  // More solver iterations = stiffer contact resolution — soldiers push
-  // apart cleanly instead of sinking into each other and springing back.
-  world.solver.iterations = 20;
+  // More solver iterations = stiffer contact resolution, but this is the
+  // single most expensive knob in the whole simulation (multiplies cost
+  // per contact, and there can be hundreds of contacts at once). 20 was
+  // too aggressive and tanked frame rate badly enough that movement felt
+  // broken; 12 is a smaller step up from cannon-es's default of 10.
+  world.solver.iterations = 12;
   // Low restitution keeps jostles from bouncing/jittering; moderate
   // friction stops soldiers sliding past each other after a knock.
   world.defaultContactMaterial.restitution = 0.05;
@@ -213,10 +216,10 @@ if (!canUseWebGL()) {
       mass: 1,
       shape: new CANNON.Sphere(SOLDIER_RADIUS),
       position: new CANNON.Vec3(x, 0.5 + Math.random() * 0.5, z),
-      // Lower than before: high damping was killing collision-induced
-      // velocity almost instantly, so a jostle never had time to read as
-      // actual displacement before it got absorbed away.
-      linearDamping: 0.5,
+      // Between the original 0.85 (killed jostle velocity almost
+      // instantly) and the 0.5 that replaced it (too little resistance,
+      // made the solver work harder to keep a dense crowd stable).
+      linearDamping: 0.65,
       fixedRotation: true,
     });
     world.addBody(body);
@@ -577,7 +580,11 @@ if (!canUseWebGL()) {
   // Blending lets a knock persist and decay over several frames instead.
   function steerCrowd(crowd) {
     const steerSpeed = 6;
-    const steerResponsiveness = 0.3;
+    // Raised from 0.3 — that was letting the leader body ramp up to speed
+    // too slowly, compounding with the perf hit above into movement that
+    // felt barely responsive. Still < 1 so a jostle isn't erased in one
+    // frame, just not so low that steering itself feels sluggish.
+    const steerResponsiveness = 0.5;
     crowd.bodies.forEach((body, i) => {
       const slot = computeSlotPosition(
         i,
