@@ -435,7 +435,7 @@ if (!canUseWebGL()) {
       2,
       1 + Math.max(0, crowdRadius(crowd.count) - crowdRadius(15)) * 0.12
     );
-    const zoomEase = Math.min(1, (delta === undefined ? 1 : delta) * 2);
+    const zoomEase = Math.min(1, (delta === undefined ? 1 : delta) * 1.2);
     cameraZoom += (targetZoom - cameraZoom) * zoomEase;
 
     camera.position.set(centroid.x, baseHeight * cameraZoom, centroid.z + baseBehind * cameraZoom);
@@ -579,12 +579,18 @@ if (!canUseWebGL()) {
   let gameOver = false;
   const clock = new THREE.Clock();
 
-  // When the player loses, instead of freezing instantly: the player's
-  // groups transfer into the winning rival (visually "converting" into
-  // its crowd/color) and the camera follows that rival for DEFEAT_DELAY
-  // seconds before the end screen actually shows.
-  const DEFEAT_DELAY = 1;
+  // Shared pause before either end-of-round screen actually shows, so the
+  // round never just freezes instantly — see pendingDefeat/pendingVictory
+  // below for what plays during it in each case.
+  const ROUND_END_DELAY = 1;
+  // Losing: the player's groups transfer into the winning rival (visually
+  // "converting" into its crowd/color) and the camera follows that rival
+  // for the delay.
   let pendingDefeat = null; // { rival, timer } while the sequence plays out
+  // Winning by absorbing the last rival: the player keeps playing/
+  // rendering normally (already grew on absorption) for the same delay,
+  // camera staying on the player, before the end screen shows.
+  let pendingVictory = null; // { timer } while the sequence plays out
 
   function formatTime(seconds) {
     const s = Math.max(0, Math.ceil(seconds));
@@ -710,21 +716,21 @@ if (!canUseWebGL()) {
           // Player's groups visually convert into the winning rival's
           // crowd instead of just vanishing — r keeps existing (not
           // removed/spliced) so it can keep rendering them merging in
-          // during the DEFEAT_DELAY window below. player.count is left
+          // during the delay window below. player.count is left
           // untouched: endRound's "Final size" reads it, and zeroing it
           // here would show 0 instead of the size you actually reached.
           const absorbedGroups = player.groups;
           r.groups = r.groups.concat(absorbedGroups);
           r.count += player.count;
           player.groups = [];
-          pendingDefeat = { rival: r, timer: DEFEAT_DELAY };
+          pendingDefeat = { rival: r, timer: ROUND_END_DELAY };
           return;
         }
       }
     }
 
     if (rivalCrowds.length === 0) {
-      endRound('All Rivals Defeated!');
+      pendingVictory = { timer: ROUND_END_DELAY };
     }
   }
 
@@ -967,6 +973,24 @@ if (!canUseWebGL()) {
         pendingDefeat = null;
         endRound('Defeated!');
       }
+    } else if (pendingVictory) {
+      // Same beat as pendingDefeat, mirrored: the player already grew
+      // from absorbing the last rival, so there's nothing to transfer —
+      // just keep letting that final absorption settle into formation,
+      // camera staying on the player, before the end screen shows.
+      pendingVictory.timer -= delta;
+
+      const hash = buildSpatialHash(player.groups);
+      updateCrowdMotion(player, hash, delta);
+      renderCrowd(player);
+
+      updateLeaderboard();
+      updateCamera(player, delta);
+
+      if (pendingVictory.timer <= 0) {
+        pendingVictory = null;
+        endRound('All Rivals Defeated!');
+      }
     } else if (!gameOver) {
       timeLeft -= delta;
       if (timeLeft <= 0) {
@@ -991,11 +1015,11 @@ if (!canUseWebGL()) {
       checkCollisions();
 
       // checkCollisions may have just set pendingDefeat (and cleared
-      // player.groups) as a side effect — skip the rest of this frame's
-      // normal-path rendering/camera in that case so updateCamera doesn't
-      // centroid an empty player crowd to world origin for one frame
-      // before the pendingDefeat branch takes over next frame.
-      if (!pendingDefeat) {
+      // player.groups) or pendingVictory as a side effect — skip the rest
+      // of this frame's normal-path rendering/camera in that case so
+      // updateCamera doesn't centroid an empty player crowd to world
+      // origin for one frame before the pending* branch takes over next.
+      if (!pendingDefeat && !pendingVictory) {
         let allGroups = player.groups;
         rivalCrowds.forEach((r) => {
           allGroups = allGroups.concat(r.groups);
