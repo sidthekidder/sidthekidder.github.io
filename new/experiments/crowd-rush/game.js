@@ -132,13 +132,42 @@ if (!canUseWebGL()) {
   document.body.appendChild(renderer.domElement);
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.1));
-  const sunLight = new THREE.DirectionalLight(0xffffff, 0.6);
+  const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
   sunLight.position.set(20, 30, 10);
   scene.add(sunLight);
 
+  // --- Toon shading ---
+  // Everything in the scene uses MeshToonMaterial (built into Three.js
+  // core, no shader code or extra CDN package needed) instead of
+  // MeshLambertMaterial, quantized against this hand-rolled 4-step
+  // gradient map so lighting reads as flat cartoon bands instead of a
+  // smooth gradient — this + low-poly geometry is the standard look for
+  // this genre of mobile game, chosen over photorealism (needs real PBR
+  // textures/HDRI we have no way to source here) specifically because it
+  // needs zero external assets, same as everything else on this page.
+  function makeToonGradientTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 4;
+    canvas.height = 1;
+    const ctx = canvas.getContext('2d');
+    ['#4d4d4d', '#8a8a8a', '#c2c2c2', '#ffffff'].forEach((color, i) => {
+      ctx.fillStyle = color;
+      ctx.fillRect(i, 0, 1, 1);
+    });
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    return texture;
+  }
+  const toonGradientMap = makeToonGradientTexture();
+
+  function makeToonMaterial(options) {
+    return new THREE.MeshToonMaterial({ ...options, gradientMap: toonGradientMap });
+  }
+
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(ARENA_HALF * 2 + 20, ARENA_HALF * 2 + 20),
-    new THREE.MeshLambertMaterial({ color: 0x9aa3ad })
+    makeToonMaterial({ color: 0x9aa3ad })
   );
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
@@ -157,7 +186,7 @@ if (!canUseWebGL()) {
     const trunkHeight = 0.6 + Math.random() * 0.3;
     const trunk = new THREE.Mesh(
       new THREE.CylinderGeometry(0.08, 0.1, trunkHeight, 6),
-      new THREE.MeshLambertMaterial({ color: 0x8b6b4a })
+      makeToonMaterial({ color: 0x8b6b4a, flatShading: true })
     );
     trunk.position.set(x, trunkHeight / 2, z);
     scene.add(trunk);
@@ -165,7 +194,7 @@ if (!canUseWebGL()) {
     const foliageHeight = 1.2 + Math.random() * 0.6;
     const foliage = new THREE.Mesh(
       new THREE.ConeGeometry(0.55 + Math.random() * 0.2, foliageHeight, 7),
-      new THREE.MeshLambertMaterial({ color: 0x4a8f5c })
+      makeToonMaterial({ color: 0x4a8f5c, flatShading: true })
     );
     foliage.position.set(x, trunkHeight + foliageHeight / 2 - 0.05, z);
     scene.add(foliage);
@@ -174,7 +203,7 @@ if (!canUseWebGL()) {
   function makeParkCell(bx, bz, size) {
     const patch = new THREE.Mesh(
       new THREE.PlaneGeometry(size, size),
-      new THREE.MeshLambertMaterial({ color: 0x8fd18f })
+      makeToonMaterial({ color: 0x8fd18f })
     );
     patch.rotation.x = -Math.PI / 2;
     patch.position.set(bx, 0.02, bz); // just above the road plane, avoids z-fighting
@@ -205,7 +234,7 @@ if (!canUseWebGL()) {
         const color = buildingColors[Math.floor(Math.random() * buildingColors.length)];
         const mesh = new THREE.Mesh(
           new THREE.BoxGeometry(size, height, size),
-          new THREE.MeshLambertMaterial({ color, transparent: true, opacity: 0.55 })
+          makeToonMaterial({ color, transparent: true, opacity: 0.55, flatShading: true })
         );
         mesh.position.set(bx, height / 2, bz);
         scene.add(mesh);
@@ -290,8 +319,26 @@ if (!canUseWebGL()) {
     return target;
   }
 
+  // Cartoon-style outline: a second InstancedMesh sharing the same
+  // geometry, rendered solid black with only its back faces visible and
+  // scaled up slightly larger than the real mesh (the classic "inverted
+  // hull" technique — draw the model twice, inflate the second copy
+  // along its own surface, and only its back faces peek out from behind
+  // the first copy's front faces, reading as an outline). No
+  // postprocessing pass needed, so it costs nothing beyond one extra
+  // cheap (unlit, no toon shading) InstancedMesh per crowd.
+  const OUTLINE_SCALE = 1.18;
+
+  function makeOutlineMesh(capacity) {
+    const material = new THREE.MeshBasicMaterial({ color: 0x1a1a1a, side: THREE.BackSide });
+    const mesh = new THREE.InstancedMesh(personGeometry, material, capacity);
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    return mesh;
+  }
+
   function makeCrowdMesh(color, capacity) {
-    const material = new THREE.MeshLambertMaterial({ color });
+    const material = makeToonMaterial({ color, flatShading: true });
     const mesh = new THREE.InstancedMesh(personGeometry, material, capacity);
     // Instances are placed via per-instance matrices at their world
     // position while the mesh itself never moves from local origin, so
@@ -332,6 +379,7 @@ if (!canUseWebGL()) {
     facing: 0,
     moveBlend: 0,
     mesh: makeCrowdMesh(0x3a7bd5, PLAYER_CAP),
+    outlineMesh: makeOutlineMesh(PLAYER_CAP),
     groups: [],
   };
   player.groups = spawnGroups(player.count, player.position.x, player.position.z);
@@ -356,6 +404,7 @@ if (!canUseWebGL()) {
     const count = 2 + i * 3 + Math.floor(Math.random() * 4);
     const pos = randomRoadPosition(buildingCollisionRadius(count));
     const mesh = makeCrowdMesh(rivalColors[i], 300);
+    const outlineMesh = makeOutlineMesh(300);
     const groups = spawnGroups(count, pos.x, pos.z);
     rivalCrowds.push({
       name: rivalNames[i],
@@ -365,6 +414,7 @@ if (!canUseWebGL()) {
       facing: 0,
       moveBlend: 0,
       mesh,
+      outlineMesh,
       groups,
       wanderTarget: pos.clone(),
       wanderTimer: 0,
@@ -650,6 +700,7 @@ if (!canUseWebGL()) {
             winner.groups = winner.groups.concat(loser.groups);
             winner.count += loser.count;
             scene.remove(loser.mesh);
+            scene.remove(loser.outlineMesh);
             rivalCrowds.splice(rivalCrowds.indexOf(loser), 1);
             resolvedAny = true;
             break;
@@ -678,6 +729,7 @@ if (!canUseWebGL()) {
           player.groups = player.groups.concat(r.groups);
           player.count += r.count;
           scene.remove(r.mesh);
+          scene.remove(r.outlineMesh);
           rivalCrowds.splice(i, 1);
         } else {
           spawnBurst(playerCentroid.x, playerCentroid.z, 0xff4d4d);
@@ -820,7 +872,9 @@ if (!canUseWebGL()) {
 
   // Writes GROUP_SIZE instances per group into the crowd's InstancedMesh
   // — small fixed offsets around the group's position plus a per-instance
-  // cosmetic bob/lean, so a cluster still reads as a few separate people.
+  // cosmetic bob/lean, so a cluster still reads as a few separate people
+  // — and a matching, slightly larger set into its outline companion
+  // mesh (see makeOutlineMesh) at the same position/rotation.
   function renderCrowd(crowd) {
     let renderIndex = 0;
     crowd.groups.forEach((group) => {
@@ -835,13 +889,22 @@ if (!canUseWebGL()) {
           group.position.z + offset.z
         );
         dummy.rotation.y = crowd.facing + lean;
+
+        dummy.scale.setScalar(1);
         dummy.updateMatrix();
         crowd.mesh.setMatrixAt(renderIndex, dummy.matrix);
+
+        dummy.scale.setScalar(OUTLINE_SCALE);
+        dummy.updateMatrix();
+        crowd.outlineMesh.setMatrixAt(renderIndex, dummy.matrix);
+
         renderIndex++;
       }
     });
     crowd.mesh.count = renderIndex;
     crowd.mesh.instanceMatrix.needsUpdate = true;
+    crowd.outlineMesh.count = renderIndex;
+    crowd.outlineMesh.instanceMatrix.needsUpdate = true;
   }
 
   function animate() {
