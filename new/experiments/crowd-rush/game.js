@@ -720,20 +720,39 @@ if (!canUseWebGL()) {
 
   const slotScratch = { x: 0, z: 0 };
 
-  // LEASH_DISTANCE is a hard cap: the largest formation ring in a
-  // realistically-sized crowd sits around ~4.4 units out, so anything
-  // past 6 isn't a group running to catch up, it's lost after an absorb
-  // or pinned by a building corner — snap it straight back rather than
-  // let it drift indefinitely and spread the crowd out further than the
-  // collision radius actually represents.
+  // LEASH_DISTANCE is a last-resort hard cap: the largest formation ring
+  // in a realistically-sized crowd sits around ~4.4 units out, so
+  // anything past 6 is treated as truly stuck (e.g. pinned by a building
+  // corner) rather than a group that's merely behind — snap it straight
+  // back rather than let it drift indefinitely. With the catch-up speed
+  // boost below, a normal straggler should almost never reach this: it
+  // should visibly race back into formation well before then instead of
+  // camera-following-centroid leaving it off-screen to drift unseen until
+  // it suddenly teleports back into view.
   const LEASH_DISTANCE = 6;
+
+  // Base steering speed once within CATCHUP_START of the target slot.
+  // Beyond that, speed ramps up with distance (capped at CATCHUP_MAX_SPEED)
+  // so a group that's fallen behind sprints back rather than crawling at
+  // the same speed as everyone else already in formation.
+  const BASE_STEER_SPEED = 6;
+  const CATCHUP_START = 3;
+  const CATCHUP_RATE = 2.5;
+  const CATCHUP_MAX_SPEED = 14;
+
+  function steerSpeedForDistance(dist) {
+    if (dist <= CATCHUP_START) return BASE_STEER_SPEED;
+    return Math.min(
+      CATCHUP_MAX_SPEED,
+      BASE_STEER_SPEED + (dist - CATCHUP_START) * CATCHUP_RATE
+    );
+  }
 
   // Full per-frame motion update for one crowd: steer each group toward
   // its formation slot, separate from nearby groups (any crowd), avoid
   // buildings, then integrate position directly — no physics step
   // involved, this IS the step.
   function updateCrowdMotion(crowd, hash, delta) {
-    const steerSpeed = 6;
     let individualIndex = 0;
     crowd.groups.forEach((group) => {
       const slot = computeSlotPosition(
@@ -757,7 +776,7 @@ if (!canUseWebGL()) {
         let steerX = 0;
         let steerZ = 0;
         if (dist > 0.02) {
-          const speed = Math.min(steerSpeed, dist * 8);
+          const speed = Math.min(steerSpeedForDistance(dist), dist * 8);
           steerX = (dx / dist) * speed;
           steerZ = (dz / dist) * speed;
         }
