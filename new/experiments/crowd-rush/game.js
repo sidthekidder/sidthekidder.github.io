@@ -1,4 +1,24 @@
+// Pure, side-effect-free crowd-simulation math (formation layout, spatial
+// hashing, separation forces, AABB collision, size/speed formulas) lives
+// in lib/ and is unit-tested under plain Node — see tests/ and run
+// `npm test` (or `node tests/<name>.test.js` directly) from this
+// directory, no install needed. Everything below this point is the
+// THREE.js/DOM orchestration layer: scene setup, input handling, audio,
+// and the animate() loop that wires the pure lib/ functions together —
+// each lib function is used here through a small same-named wrapper that
+// closes over this file's live state (buildings, elapsedTime, tuning
+// constants), so the wrappers are the seam between "game glue" and
+// "tested logic" if you're looking for where to extend either.
 import * as THREE from 'https://esm.sh/three@0.165.0';
+import { resolveBoxCollision } from './lib/aabb.js';
+import {
+  crowdRadius,
+  buildingCollisionRadius,
+  steerSpeedForDistance,
+} from './lib/crowdMath.js';
+import { computeFormationSlot } from './lib/formation.js';
+import { buildSpatialHash as buildHash } from './lib/spatialHash.js';
+import { computeSeparation as computeSeparationForce } from './lib/separation.js';
 
 function canUseWebGL() {
   try {
@@ -203,23 +223,12 @@ if (!canUseWebGL()) {
   });
 
   // Shared by the logical leader position's navigation AND every group's
-  // per-frame building avoidance (see updateCrowdMotion below).
+  // per-frame building avoidance (see updateCrowdMotion below). Thin
+  // wrapper over the pure, unit-tested resolveBoxCollision (lib/aabb.js)
+  // that closes over this game's buildings list and arena size, so every
+  // existing call site below keeps working unchanged.
   function resolveBuildingCollision(position, radius) {
-    for (const b of buildings) {
-      const closestX = Math.max(b.minX, Math.min(position.x, b.maxX));
-      const closestZ = Math.max(b.minZ, Math.min(position.z, b.maxZ));
-      const dx = position.x - closestX;
-      const dz = position.z - closestZ;
-      const distSq = dx * dx + dz * dz;
-      if (distSq < radius * radius) {
-        const dist = Math.sqrt(distSq) || 0.0001;
-        const push = radius - dist;
-        position.x += (dx / dist) * push;
-        position.z += (dz / dist) * push;
-      }
-    }
-    position.x = Math.max(-ARENA_HALF, Math.min(ARENA_HALF, position.x));
-    position.z = Math.max(-ARENA_HALF, Math.min(ARENA_HALF, position.z));
+    resolveBoxCollision(position, radius, buildings, ARENA_HALF);
   }
 
   function randomRoadPosition(pushRadius) {
@@ -247,59 +256,18 @@ if (!canUseWebGL()) {
   ];
 
   let elapsedTime = 0;
+  // crowdRadius / buildingCollisionRadius imported from lib/crowdMath.js.
 
-  function crowdRadius(count) {
-    return 0.6 + Math.sqrt(count) * 0.35;
-  }
-
-  // Road gaps between buildings are 4 units wide. Capture range should keep
-  // growing with crowd size, but the radius used to push the *logical*
-  // leader position off buildings must stay under half that gap, or a big
-  // crowd gets wedged between two buildings at once.
-  function buildingCollisionRadius(count) {
-    return Math.min(crowdRadius(count), 1.3);
-  }
-
-  // Where soldier `index` (within a crowd of any size) belongs, blending
-  // between a gathered circle (moveBlend 0) and a wedge trailing behind
-  // the facing direction (moveBlend 1). This is a target for steering,
-  // not a direct position write — separation from neighbors still gets
-  // the final say each frame.
-  //
-  // Writes into `out` instead of returning a fresh object: this runs once
-  // per group every frame, and repeated per-frame allocation here (and in
-  // crowdCentroid) was found to cause periodic GC pauses — the textbook
-  // signature of frame-rate "jumping"/stutter rather than uniformly-low FPS.
+  // Thin wrapper over the pure, unit-tested computeFormationSlot
+  // (lib/formation.js) that injects this game's live elapsedTime clock,
+  // so every existing call site below keeps its original 6-argument
+  // shape. Writing into `out` instead of allocating matters here: this
+  // runs once per group every frame, and repeated per-frame allocation
+  // (here and in crowdCentroid) was found to cause periodic GC pauses —
+  // the textbook signature of frame-rate "jumping"/stutter rather than
+  // uniformly-low FPS.
   function computeSlotPosition(index, centerX, centerZ, facingAngle, moveBlend, out) {
-    let ring = 0;
-    let ringStart = 0;
-    let ringCapacity = 1;
-    while (index >= ringStart + ringCapacity) {
-      ringStart += ringCapacity;
-      ring++;
-      ringCapacity = ring * 6;
-    }
-    const posInRing = index - ringStart;
-    const baseAngle = (posInRing / ringCapacity) * Math.PI * 2;
-    const seed = index * 12.9898;
-    const wobble = Math.sin(elapsedTime * 2.4 + seed) * 0.07;
-
-    const ringRadius = ring * 0.55;
-    const circleX = centerX + Math.cos(baseAngle) * (ringRadius + wobble);
-    const circleZ = centerZ + Math.sin(baseAngle) * (ringRadius + wobble);
-
-    const forwardX = Math.sin(facingAngle);
-    const forwardZ = Math.cos(facingAngle);
-    const rightX = Math.cos(facingAngle);
-    const rightZ = -Math.sin(facingAngle);
-    const depthOffset = ring * 0.42 + Math.cos(baseAngle) * (ring * 0.12) + wobble;
-    const lateralOffset = Math.sin(baseAngle) * (ring * 0.5) + wobble;
-    const trailX = centerX - forwardX * depthOffset + rightX * lateralOffset;
-    const trailZ = centerZ - forwardZ * depthOffset + rightZ * lateralOffset;
-
-    out.x = circleX + (trailX - circleX) * moveBlend;
-    out.z = circleZ + (trailZ - circleZ) * moveBlend;
-    return out;
+    return computeFormationSlot(index, centerX, centerZ, facingAngle, moveBlend, elapsedTime, out);
   }
 
   // The crowd's real visual center — the size-weighted average of where
@@ -734,99 +702,33 @@ if (!canUseWebGL()) {
     }
   }
 
-  // --- Spatial hash ---
+  // --- Spatial hash + boids-style separation ---
   // Replaces a full physics engine's broadphase for "which groups are
-  // near this one" queries. Rebuilt fresh every frame (cheap — O(number
-  // of groups)) rather than incrementally maintained, since groups move
-  // every frame anyway. CELL_SIZE is a little larger than the separation
-  // radius so a 3x3 cell neighborhood always covers it.
+  // near this one" queries (lib/spatialHash.js), and is what gives
+  // jostle/knockback now: groups (regardless of which crowd owns them,
+  // same as the removed physics engine treated every soldier) push apart
+  // from close neighbors (lib/separation.js) — no rigid-body solver, no
+  // gravity, no broadphase/narrowphase pipeline. Rebuilt fresh every
+  // frame (cheap — O(number of groups)) rather than incrementally
+  // maintained, since groups move every frame anyway. CELL_SIZE is a
+  // little larger than SEPARATION_RADIUS so a 3x3 cell neighborhood
+  // always covers it.
 
   const CELL_SIZE = 1.2;
-
-  function cellKey(cx, cz) {
-    return cx + ':' + cz;
-  }
-
-  function buildSpatialHash(allGroups) {
-    const hash = new Map();
-    for (const group of allGroups) {
-      const cx = Math.floor(group.position.x / CELL_SIZE);
-      const cz = Math.floor(group.position.z / CELL_SIZE);
-      const key = cellKey(cx, cz);
-      let bucket = hash.get(key);
-      if (!bucket) {
-        bucket = [];
-        hash.set(key, bucket);
-      }
-      bucket.push(group);
-    }
-    return hash;
-  }
-
-  function forEachNearby(hash, x, z, callback) {
-    const cx = Math.floor(x / CELL_SIZE);
-    const cz = Math.floor(z / CELL_SIZE);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        const bucket = hash.get(cellKey(cx + dx, cz + dz));
-        if (bucket) {
-          for (const other of bucket) callback(other);
-        }
-      }
-    }
-  }
-
-  // --- Boids-style separation ---
-  // This is what gives jostle/knockback now: groups (regardless of which
-  // crowd owns them, same as the removed physics engine treated every
-  // soldier) push apart from close neighbors. No rigid-body solver, no
-  // gravity, no broadphase/narrowphase pipeline — just a spatial-hash
-  // neighbor query and a direct force, which is the standard approach
-  // real crowd/flocking simulations use instead of a general physics
-  // engine (whose collision pipeline doesn't scale for "many simple
-  // agents" the way it does for a handful of "real" rigid objects).
-
   const SEPARATION_RADIUS = 0.9;
   const SEPARATION_STRENGTH = 5;
   const separationScratch = { x: 0, z: 0 };
 
+  function buildSpatialHash(allGroups) {
+    return buildHash(allGroups, CELL_SIZE);
+  }
+
   function computeSeparation(group, hash, out) {
-    out.x = 0;
-    out.z = 0;
-    forEachNearby(hash, group.position.x, group.position.z, (other) => {
-      if (other === group) return;
-      const dx = group.position.x - other.position.x;
-      const dz = group.position.z - other.position.z;
-      const dist = Math.sqrt(dx * dx + dz * dz) || 0.001;
-      if (dist < SEPARATION_RADIUS) {
-        const push = (SEPARATION_RADIUS - dist) / SEPARATION_RADIUS;
-        out.x += (dx / dist) * push;
-        out.z += (dz / dist) * push;
-      }
-    });
-    out.x *= SEPARATION_STRENGTH;
-    out.z *= SEPARATION_STRENGTH;
-    return out;
+    return computeSeparationForce(group, hash, CELL_SIZE, SEPARATION_RADIUS, SEPARATION_STRENGTH, out);
   }
 
   const slotScratch = { x: 0, z: 0 };
-
-  // Base steering speed once within CATCHUP_START of the target slot.
-  // Beyond that, speed ramps up with distance (capped at CATCHUP_MAX_SPEED)
-  // so a group that's fallen behind sprints back rather than crawling at
-  // the same speed as everyone else already in formation.
-  const BASE_STEER_SPEED = 6;
-  const CATCHUP_START = 3;
-  const CATCHUP_RATE = 2.5;
-  const CATCHUP_MAX_SPEED = 14;
-
-  function steerSpeedForDistance(dist) {
-    if (dist <= CATCHUP_START) return BASE_STEER_SPEED;
-    return Math.min(
-      CATCHUP_MAX_SPEED,
-      BASE_STEER_SPEED + (dist - CATCHUP_START) * CATCHUP_RATE
-    );
-  }
+  // steerSpeedForDistance imported from lib/crowdMath.js.
 
   // Full per-frame motion update for one crowd: steer each group toward
   // its formation slot, separate from nearby groups (any crowd), avoid

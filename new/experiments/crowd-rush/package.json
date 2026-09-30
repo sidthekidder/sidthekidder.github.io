@@ -1,0 +1,9 @@
+{
+  "name": "crowd-rush",
+  "private": true,
+  "type": "module",
+  "description": "No build step, no dependencies — this file exists only so Node treats lib/ and tests/ as ES modules when running `node tests/<name>.test.js`. The game itself loads Three.js from a CDN directly in the browser and needs nothing installed here.",
+  "scripts": {
+    "test": "for f in tests/*.test.js; do node \"$f\" || exit 1; done"
+  }
+}
