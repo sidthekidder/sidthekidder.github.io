@@ -1,5 +1,4 @@
 import * as THREE from 'https://esm.sh/three@0.165.0';
-import * as CANNON from 'https://esm.sh/cannon-es@0.20.0';
 
 function canUseWebGL() {
   try {
@@ -17,12 +16,10 @@ if (!canUseWebGL()) {
   const ARENA_HALF = 30;
   const ROUND_SECONDS = 60;
   const PLAYER_CAP = 500;
-  // Soldiers are batched into physics-body "clusters" rather than one
-  // rigid body each — broadphase collision cost scales roughly with the
-  // square of body count, so grouping 4 soldiers per body cuts body count
-  // (and pair checks) by ~16x. Each cluster still renders GROUP_SIZE
-  // separate capsules (small fixed offsets around the body), so it reads
-  // as individuals, just no longer as individually-simulated physics.
+  // Soldiers are batched into "clusters" rather than simulated one at a
+  // time — each cluster steers/separates as a unit and renders GROUP_SIZE
+  // separate capsules (small fixed offsets), so it still reads as
+  // individuals while keeping the simulated entity count down.
   const GROUP_SIZE = 4;
   const GROUP_RADIUS = 0.32;
 
@@ -67,29 +64,11 @@ if (!canUseWebGL()) {
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
 
-  // --- Physics world ---
-  // Groups of soldiers (not the crowd centroid, and not one body per
-  // soldier) are real rigid bodies — so clusters physically jostle each
-  // other, collide with buildings, and knock into rival crowds on
-  // contact, while staying well under the body count a fully
-  // one-per-soldier simulation would need.
+  // --- City blocks (solid obstacles) ---
+  // No physics engine involved: groups avoid buildings with the same
+  // cheap AABB push-out used for the logical leader position below.
 
-  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
-  // Default broadphase (NaiveBroadphase) checks every body pair
-  // regardless of distance. SAPBroadphase sorts bodies along an axis and
-  // skips pairs that can't possibly be touching — meaningfully cheaper
-  // once there's more than a handful of bodies spread across the arena.
-  world.broadphase = new CANNON.SAPBroadphase(world);
-
-  const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
-  groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
-  world.addBody(groundBody);
-
-  // --- City blocks (solid obstacles — real physics bodies now, soldiers
-  // collide with them directly instead of being algebraically pushed out) ---
-
-  const buildings = []; // { minX, maxX, minZ, maxZ } — still used by the
-  // logical leader position's own navigation, see resolveBuildingCollision
+  const buildings = []; // { minX, maxX, minZ, maxZ }
   const buildingColors = [0xf2d7a0, 0xa7c7e7, 0xf4a6a6, 0xb8e0c2];
   const gridPositions = [-24, -12, 0, 12, 24];
 
@@ -111,19 +90,11 @@ if (!canUseWebGL()) {
         minZ: bz - size / 2,
         maxZ: bz + size / 2,
       });
-
-      const buildingBody = new CANNON.Body({
-        mass: 0,
-        shape: new CANNON.Box(new CANNON.Vec3(size / 2, 6, size / 2)),
-        position: new CANNON.Vec3(bx, 6, bz),
-      });
-      world.addBody(buildingBody);
     });
   });
 
-  // Still used for the crowd's *logical* leader position (win/lose checks,
-  // camera target) — kept independent of the physics simulation so core
-  // gameplay stays deterministic even under heavy physics load.
+  // Shared by the logical leader position's navigation AND every group's
+  // per-frame building avoidance (see updateCrowdMotion below).
   function resolveBuildingCollision(position, radius) {
     for (const b of buildings) {
       const closestX = Math.max(b.minX, Math.min(position.x, b.maxX));
@@ -156,10 +127,6 @@ if (!canUseWebGL()) {
 
   const personGeometry = new THREE.CapsuleGeometry(0.16, 0.35, 3, 6);
   const PERSON_HALF_HEIGHT = 0.35 / 2 + 0.16;
-  // Aligns each capsule's visual base with where its group's physics
-  // sphere actually rests on the ground (sphere settles at y = its own
-  // radius).
-  const RENDER_Y_OFFSET = PERSON_HALF_HEIGHT - GROUP_RADIUS;
 
   // Small fixed offsets so a GROUP_SIZE cluster still reads as a few
   // separate people huddled together rather than one fat capsule.
@@ -186,16 +153,14 @@ if (!canUseWebGL()) {
 
   // Where soldier `index` (within a crowd of any size) belongs, blending
   // between a gathered circle (moveBlend 0) and a wedge trailing behind
-  // the facing direction (moveBlend 1). This is a target for physics
-  // *steering*, not a direct position write — the solver has the final
-  // say once collisions with neighbors/buildings are factored in.
+  // the facing direction (moveBlend 1). This is a target for steering,
+  // not a direct position write — separation from neighbors still gets
+  // the final say each frame.
   //
-  // Writes into `out` instead of returning a fresh object — this runs
-  // once per group every single frame (steerCrowd's hot path), and a
-  // researched pass at the "jumping" frame rate found that repeated
-  // per-frame allocation here (and in crowdCentroid) was producing
-  // periodic GC pauses, which is the textbook signature of stutter/
-  // jumping rather than uniformly-low FPS.
+  // Writes into `out` instead of returning a fresh object: this runs once
+  // per group every frame, and repeated per-frame allocation here (and in
+  // crowdCentroid) was found to cause periodic GC pauses — the textbook
+  // signature of frame-rate "jumping"/stutter rather than uniformly-low FPS.
   function computeSlotPosition(index, centerX, centerZ, facingAngle, moveBlend, out) {
     let ring = 0;
     let ringStart = 0;
@@ -229,20 +194,16 @@ if (!canUseWebGL()) {
   }
 
   // The crowd's real visual center — the size-weighted average of where
-  // its groups' physics bodies actually are, not the abstract WASD-driven
-  // intent point (crowd.position). Used for anything that should reflect
-  // what's actually on screen: collision/contact checks and the camera.
-  //
-  // Pass `out` to write into an existing object instead of allocating —
-  // matters most in checkRivalVsRivalCollisions, which used to call this
-  // fresh for the same rival on every pair comparison in its O(n^2) loop.
+  // its groups actually are, not the abstract WASD-driven intent point
+  // (crowd.position). Used for anything that should reflect what's
+  // actually on screen: collision/contact checks and the camera.
   function crowdCentroid(crowd, out) {
     let sumX = 0;
     let sumZ = 0;
     let totalSize = 0;
     crowd.groups.forEach((group) => {
-      sumX += group.body.position.x * group.size;
-      sumZ += group.body.position.z * group.size;
+      sumX += group.position.x * group.size;
+      sumZ += group.position.z * group.size;
       totalSize += group.size;
     });
     const n = totalSize || 1;
@@ -250,18 +211,6 @@ if (!canUseWebGL()) {
     target.x = sumX / n;
     target.z = sumZ / n;
     return target;
-  }
-
-  function makeGroupBody(x, z) {
-    const body = new CANNON.Body({
-      mass: 1,
-      shape: new CANNON.Sphere(GROUP_RADIUS),
-      position: new CANNON.Vec3(x, 0.5 + Math.random() * 0.5, z),
-      linearDamping: 0.85,
-      fixedRotation: true,
-    });
-    world.addBody(body);
-    return body;
   }
 
   function makeCrowdMesh(color, capacity) {
@@ -278,20 +227,21 @@ if (!canUseWebGL()) {
     return mesh;
   }
 
-  // Spawns GROUP_SIZE-soldier clusters already near their formation slot
-  // (rather than all stacked at one point), so the physics solver doesn't
-  // have to violently separate a pile of exactly-overlapping bodies on
-  // the first step. Each group's target slot is computed at its first
-  // individual index — close enough to where the rest of that cluster
-  // would sit, since a few consecutive formation indices are always
-  // spatially near each other.
+  // Spawns GROUP_SIZE-soldier clusters already at their formation slot.
+  // Each group's target slot is computed at its first individual index —
+  // close enough to where the rest of that cluster would sit, since a few
+  // consecutive formation indices are always spatially near each other.
   function spawnGroups(count, x, z) {
     const groups = [];
     let placed = 0;
     while (placed < count) {
       const size = Math.min(GROUP_SIZE, count - placed);
       const slot = computeSlotPosition(placed, x, z, 0, 0, { x: 0, z: 0 });
-      groups.push({ body: makeGroupBody(slot.x, slot.z), size });
+      groups.push({
+        position: { x: slot.x, z: slot.z },
+        velocity: { x: 0, z: 0 },
+        size,
+      });
       placed += size;
     }
     return groups;
@@ -328,9 +278,6 @@ if (!canUseWebGL()) {
   for (let i = 0; i < RIVAL_COUNT; i++) {
     const count = 2 + i * 3 + Math.floor(Math.random() * 4);
     const pos = randomRoadPosition(buildingCollisionRadius(count));
-    // Capacity is generous headroom, not the expected size: rivals can now
-    // absorb each other, so a single rival could in the worst case end up
-    // holding close to the whole 10-rival pool.
     const mesh = makeCrowdMesh(rivalColors[i], 300);
     const groups = spawnGroups(count, pos.x, pos.z);
     rivalCrowds.push({
@@ -349,13 +296,12 @@ if (!canUseWebGL()) {
   // --- Camera follow ---
 
   // Follows the crowd's actual visual centroid, not the logical
-  // WASD-driven position — the logical point moves at a flat, undamped
-  // speed with no physical resistance, so it would otherwise steadily
-  // pull ahead of the real (steered, damped, collision-slowed) crowd and
-  // leave the camera looking at empty space in front of the group. Using
-  // the centroid of every real body (rather than just the leader) also
-  // means one stuck straggler can't drag the camera off if the rest of
-  // the crowd has moved on.
+  // WASD-driven position — the logical point moves at a flat speed with
+  // no resistance, so it would otherwise steadily pull ahead of the real
+  // (steered, separated) crowd and leave the camera looking at empty
+  // space in front of the group. Using the centroid of every real group
+  // (rather than just one) also means a stuck straggler can't drag the
+  // camera off if the rest of the crowd has moved on.
   const cameraCentroidScratch = { x: 0, z: 0 };
 
   function updateCamera() {
@@ -560,18 +506,17 @@ if (!canUseWebGL()) {
   }
 
   // Rivals also absorb each other on contact (bigger wins, same rule as
-  // the player) — the loser's physics bodies transfer straight into the
-  // winner's array (no need to destroy/recreate them), so the absorbed
-  // soldiers keep their exact physics state and visibly run to join the
-  // winner's new formation slots on the following frames.
+  // the player) — the loser's groups transfer straight into the winner's
+  // array (no destroy/recreate — they're plain state, not physics
+  // bodies), so the absorbed soldiers keep their exact position/velocity
+  // and visibly run to join the winner's new formation on later frames.
   function checkRivalVsRivalCollisions() {
     let resolvedAny = true;
     while (resolvedAny) {
       resolvedAny = false;
       // Each rival's centroid is the same for every pair it's checked
       // against within this pass — compute it once per rival here rather
-      // than recomputing it from scratch on every pair comparison below
-      // (was up to ~45 redundant recomputations per pass at 10 rivals).
+      // than recomputing it from scratch on every pair comparison below.
       const centroids = rivalCrowds.map((r) => crowdCentroid(r));
       for (let i = 0; i < rivalCrowds.length && !resolvedAny; i++) {
         for (let j = i + 1; j < rivalCrowds.length; j++) {
@@ -628,27 +573,99 @@ if (!canUseWebGL()) {
     }
   }
 
-  const dummy = new THREE.Object3D();
+  // --- Spatial hash ---
+  // Replaces a full physics engine's broadphase for "which groups are
+  // near this one" queries. Rebuilt fresh every frame (cheap — O(number
+  // of groups)) rather than incrementally maintained, since groups move
+  // every frame anyway. CELL_SIZE is a little larger than the separation
+  // radius so a 3x3 cell neighborhood always covers it.
+
+  const CELL_SIZE = 1.2;
+
+  function cellKey(cx, cz) {
+    return cx + ':' + cz;
+  }
+
+  function buildSpatialHash(allGroups) {
+    const hash = new Map();
+    for (const group of allGroups) {
+      const cx = Math.floor(group.position.x / CELL_SIZE);
+      const cz = Math.floor(group.position.z / CELL_SIZE);
+      const key = cellKey(cx, cz);
+      let bucket = hash.get(key);
+      if (!bucket) {
+        bucket = [];
+        hash.set(key, bucket);
+      }
+      bucket.push(group);
+    }
+    return hash;
+  }
+
+  function forEachNearby(hash, x, z, callback) {
+    const cx = Math.floor(x / CELL_SIZE);
+    const cz = Math.floor(z / CELL_SIZE);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const bucket = hash.get(cellKey(cx + dx, cz + dz));
+        if (bucket) {
+          for (const other of bucket) callback(other);
+        }
+      }
+    }
+  }
+
+  // --- Boids-style separation ---
+  // This is what gives jostle/knockback now: groups (regardless of which
+  // crowd owns them, same as the removed physics engine treated every
+  // soldier) push apart from close neighbors. No rigid-body solver, no
+  // gravity, no broadphase/narrowphase pipeline — just a spatial-hash
+  // neighbor query and a direct force, which is the standard approach
+  // real crowd/flocking simulations use instead of a general physics
+  // engine (whose collision pipeline doesn't scale for "many simple
+  // agents" the way it does for a handful of "real" rigid objects).
+
+  const SEPARATION_RADIUS = 0.9;
+  const SEPARATION_STRENGTH = 5;
+  const separationScratch = { x: 0, z: 0 };
+
+  function computeSeparation(group, hash, out) {
+    out.x = 0;
+    out.z = 0;
+    forEachNearby(hash, group.position.x, group.position.z, (other) => {
+      if (other === group) return;
+      const dx = group.position.x - other.position.x;
+      const dz = group.position.z - other.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz) || 0.001;
+      if (dist < SEPARATION_RADIUS) {
+        const push = (SEPARATION_RADIUS - dist) / SEPARATION_RADIUS;
+        out.x += (dx / dist) * push;
+        out.z += (dz / dist) * push;
+      }
+    });
+    out.x *= SEPARATION_STRENGTH;
+    out.z *= SEPARATION_STRENGTH;
+    return out;
+  }
+
   const slotScratch = { x: 0, z: 0 };
 
-  // Sets each group's steering intent (velocity toward the formation slot
-  // of its first individual index) before the physics step — the solver
-  // has the final say on actual motion once collisions with neighboring
-  // groups/buildings are resolved.
-  //
   // LEASH_DISTANCE is a hard cap: the largest formation ring in a
   // realistically-sized crowd sits around ~4.4 units out, so anything
-  // past 6 isn't a group running to catch up, it's stuck on a building or
-  // lost after an absorb — snap it straight back rather than let it drift
-  // indefinitely and spread the crowd out further than the collision
-  // radius actually represents.
+  // past 6 isn't a group running to catch up, it's lost after an absorb
+  // or pinned by a building corner — snap it straight back rather than
+  // let it drift indefinitely and spread the crowd out further than the
+  // collision radius actually represents.
   const LEASH_DISTANCE = 6;
 
-  function steerCrowd(crowd) {
+  // Full per-frame motion update for one crowd: steer each group toward
+  // its formation slot, separate from nearby groups (any crowd), avoid
+  // buildings, then integrate position directly — no physics step
+  // involved, this IS the step.
+  function updateCrowdMotion(crowd, hash, delta) {
     const steerSpeed = 6;
     let individualIndex = 0;
     crowd.groups.forEach((group) => {
-      const body = group.body;
       const slot = computeSlotPosition(
         individualIndex,
         crowd.position.x,
@@ -657,43 +674,51 @@ if (!canUseWebGL()) {
         crowd.moveBlend,
         slotScratch
       );
-      const dx = slot.x - body.position.x;
-      const dz = slot.z - body.position.z;
+      const dx = slot.x - group.position.x;
+      const dz = slot.z - group.position.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
+
       if (dist > LEASH_DISTANCE) {
-        body.position.x = slot.x + (Math.random() - 0.5) * 0.3;
-        body.position.z = slot.z + (Math.random() - 0.5) * 0.3;
-        body.velocity.x = 0;
-        body.velocity.z = 0;
-      } else if (dist > 0.02) {
-        const speed = Math.min(steerSpeed, dist * 8);
-        body.velocity.x = (dx / dist) * speed;
-        body.velocity.z = (dz / dist) * speed;
+        group.position.x = slot.x + (Math.random() - 0.5) * 0.3;
+        group.position.z = slot.z + (Math.random() - 0.5) * 0.3;
+        group.velocity.x = 0;
+        group.velocity.z = 0;
       } else {
-        body.velocity.x *= 0.5;
-        body.velocity.z *= 0.5;
+        let steerX = 0;
+        let steerZ = 0;
+        if (dist > 0.02) {
+          const speed = Math.min(steerSpeed, dist * 8);
+          steerX = (dx / dist) * speed;
+          steerZ = (dz / dist) * speed;
+        }
+        const sep = computeSeparation(group, hash, separationScratch);
+        group.velocity.x = steerX + sep.x;
+        group.velocity.z = steerZ + sep.z;
+        group.position.x += group.velocity.x * delta;
+        group.position.z += group.velocity.z * delta;
+        resolveBuildingCollision(group.position, GROUP_RADIUS);
       }
       individualIndex += group.size;
     });
   }
 
-  // Reads back each group's resolved physics position (after the world
-  // step) and writes GROUP_SIZE instances into the crowd's InstancedMesh
-  // — small fixed offsets around the body plus a per-instance cosmetic
-  // bob/lean, so a cluster still reads as a few separate people.
+  const dummy = new THREE.Object3D();
+
+  // Writes GROUP_SIZE instances per group into the crowd's InstancedMesh
+  // — small fixed offsets around the group's position plus a per-instance
+  // cosmetic bob/lean, so a cluster still reads as a few separate people.
   function renderCrowd(crowd) {
     let renderIndex = 0;
     crowd.groups.forEach((group) => {
-      const body = group.body;
       for (let k = 0; k < group.size; k++) {
         const offset = GROUP_OFFSETS[k];
         const seed = renderIndex * 12.9898;
         const bob = Math.abs(Math.sin(elapsedTime * 7 + seed)) * 0.14;
         const lean = Math.sin(elapsedTime * 5 + seed) * 0.12;
         dummy.position.set(
-          body.position.x + offset.x,
-          body.position.y + RENDER_Y_OFFSET + bob,
-          body.position.z + offset.z
+          group.position.x + offset.x,
+          PERSON_HALF_HEIGHT + bob,
+          group.position.z + offset.z
         );
         dummy.rotation.y = crowd.facing + lean;
         dummy.updateMatrix();
@@ -716,9 +741,6 @@ if (!canUseWebGL()) {
         endRound("Time's Up!");
       }
 
-      // Kept close to (but slightly above) steerSpeed below, so the
-      // logical target leads the real crowd just enough to feel
-      // responsive without the gap growing large enough to be visible.
       const playerSpeed = 6.5;
       const keyDir = keyboardDirection() || joystickDirection();
       const playerBlendRate = Math.min(1, delta * 4);
@@ -735,10 +757,14 @@ if (!canUseWebGL()) {
 
       checkCollisions();
 
-      steerCrowd(player);
-      rivalCrowds.forEach((r) => steerCrowd(r));
+      let allGroups = player.groups;
+      rivalCrowds.forEach((r) => {
+        allGroups = allGroups.concat(r.groups);
+      });
+      const hash = buildSpatialHash(allGroups);
 
-      world.step(1 / 60, delta, 3);
+      updateCrowdMotion(player, hash, delta);
+      rivalCrowds.forEach((r) => updateCrowdMotion(r, hash, delta));
 
       renderCrowd(player);
       rivalCrowds.forEach((r) => renderCrowd(r));
