@@ -10,6 +10,7 @@
 // constants), so the wrappers are the seam between "game glue" and
 // "tested logic" if you're looking for where to extend either.
 import * as THREE from 'https://esm.sh/three@0.165.0';
+import { GLTFLoader } from 'https://esm.sh/three@0.165.0/examples/jsm/loaders/GLTFLoader.js';
 import { resolveBoxCollision } from './lib/aabb.js';
 import {
   crowdRadius,
@@ -36,11 +37,11 @@ if (!canUseWebGL()) {
   const ARENA_HALF = 30;
   const ROUND_SECONDS = 60;
   const PLAYER_CAP = 500;
-  // Soldiers are batched into "clusters" rather than simulated one at a
-  // time — each cluster steers/separates as a unit and renders GROUP_SIZE
-  // separate capsules (small fixed offsets), so it still reads as
-  // individuals while keeping the simulated entity count down.
-  const GROUP_SIZE = 4;
+  // Each cluster of up to GROUP_SIZE soldiers steers/separates as one
+  // simulated entity but renders as that many separate instances (small
+  // fixed offsets, see GROUP_OFFSETS) — at 1, every soldier is its own
+  // simulated entity.
+  const GROUP_SIZE = 1;
   const GROUP_RADIUS = 0.32;
 
   const hudTimer = document.getElementById('hud-timer');
@@ -174,9 +175,9 @@ if (!canUseWebGL()) {
 
   // --- City blocks: a different mix of buildings/parks/open plazas every
   // time the page loads (Play Again reloads the page, so every round gets
-  // a fresh layout for free). No physics engine involved: groups avoid
-  // buildings with the same cheap AABB push-out used for the logical
-  // leader position below; parks and open cells have no collision at all.
+  // a fresh layout for free). Groups avoid buildings with the same cheap
+  // AABB push-out used for the logical leader position below; parks and
+  // open cells have no collision at all.
 
   const buildings = []; // { minX, maxX, minZ, maxZ } — buildings only
   const buildingColors = [0xf2d7a0, 0xa7c7e7, 0xf4a6a6, 0xb8e0c2];
@@ -270,10 +271,138 @@ if (!canUseWebGL()) {
     return pos;
   }
 
-  // --- Crowd helpers ---
+  // --- Crowd character models ---
+  // Real low-poly character models — CC0, Kenney "Mini Characters" pack,
+  // see assets/characters/License.txt — instead of a plain capsule.
+  // These are rigged/animated source files, but this game has no
+  // per-instance skeletal animation (everything is one InstancedMesh per
+  // crowd driven by our own steering/separation math, not bones), so
+  // loadCharacterAsset below extracts just the bind-pose mesh data —
+  // ignoring joints/weights/animations entirely — and merges each
+  // character's multiple mesh parts (body-mesh, head-mesh) into a single
+  // BufferGeometry, since InstancedMesh needs exactly one.
 
-  const personGeometry = new THREE.CapsuleGeometry(0.16, 0.35, 3, 6);
-  const PERSON_HALF_HEIGHT = 0.35 / 2 + 0.16;
+  const CHARACTER_FILES = [
+    'character-male-a',
+    'character-female-a',
+    'character-male-b',
+    'character-female-b',
+    'character-male-c',
+    'character-female-c',
+  ];
+  // Matches the formation spacing/collision-radius tuning elsewhere,
+  // which assumes roughly this height.
+  const CHARACTER_TARGET_HEIGHT = 0.6;
+  // These models are exported from Unity, whose forward-axis convention
+  // doesn't always match glTF's -Z-forward default — if characters appear
+  // to walk backward/sideways, flip this to Math.PI (or +/- Math.PI/2).
+  const CHARACTER_FORWARD_OFFSET = 0;
+
+  // Concatenates several geometries' position/normal/uv attributes (with
+  // index values offset per geometry) into one BufferGeometry — the
+  // "merge multiple mesh parts into one" step InstancedMesh needs. Pure
+  // Three.js core BufferGeometry/BufferAttribute APIs, no addon import.
+  function mergeMeshGeometries(geometries) {
+    let vertexCount = 0;
+    let indexCount = 0;
+    geometries.forEach((g) => {
+      vertexCount += g.attributes.position.count;
+      indexCount += g.index ? g.index.count : g.attributes.position.count;
+    });
+
+    const positions = new Float32Array(vertexCount * 3);
+    const normals = new Float32Array(vertexCount * 3);
+    const uvs = new Float32Array(vertexCount * 2);
+    const indices = new Uint32Array(indexCount);
+
+    let vertexOffset = 0;
+    let indexOffset = 0;
+
+    geometries.forEach((g) => {
+      const vertCount = g.attributes.position.count;
+
+      positions.set(g.attributes.position.array, vertexOffset * 3);
+      if (g.attributes.normal) {
+        normals.set(g.attributes.normal.array, vertexOffset * 3);
+      }
+      if (g.attributes.uv) {
+        uvs.set(g.attributes.uv.array, vertexOffset * 2);
+      }
+
+      if (g.index) {
+        const idxArray = g.index.array;
+        for (let i = 0; i < idxArray.length; i++) {
+          indices[indexOffset + i] = idxArray[i] + vertexOffset;
+        }
+        indexOffset += idxArray.length;
+      } else {
+        for (let i = 0; i < vertCount; i++) {
+          indices[indexOffset + i] = i + vertexOffset;
+        }
+        indexOffset += vertCount;
+      }
+
+      vertexOffset += vertCount;
+    });
+
+    const merged = new THREE.BufferGeometry();
+    merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    merged.setIndex(new THREE.BufferAttribute(indices, 1));
+    return merged;
+  }
+
+  // Loads one character's .glb, extracts+merges its static bind-pose mesh
+  // geometry (see mergeMeshGeometries), then normalizes scale to
+  // CHARACTER_TARGET_HEIGHT and translates it so it stands with its feet
+  // on local y=0, x/z centered — matching how the old capsule geometry
+  // was always authored to sit and center on its own origin.
+  function loadCharacterAsset(name) {
+    return new Promise((resolve, reject) => {
+      const loader = new GLTFLoader();
+      loader.load(
+        `assets/characters/${name}.glb`,
+        (gltf) => {
+          gltf.scene.updateMatrixWorld(true);
+          const parts = [];
+          let texture = null;
+          gltf.scene.traverse((node) => {
+            if (node.isMesh && node.geometry) {
+              const geom = node.geometry.clone();
+              geom.applyMatrix4(node.matrixWorld);
+              parts.push(geom);
+              if (!texture && node.material && node.material.map) {
+                texture = node.material.map;
+              }
+            }
+          });
+
+          const merged = mergeMeshGeometries(parts);
+
+          merged.computeBoundingBox();
+          const rawHeight = Math.max(
+            merged.boundingBox.max.y - merged.boundingBox.min.y,
+            0.0001
+          );
+          const scale = CHARACTER_TARGET_HEIGHT / rawHeight;
+          merged.scale(scale, scale, scale);
+
+          merged.computeBoundingBox();
+          const box = merged.boundingBox;
+          merged.translate(
+            -(box.max.x + box.min.x) / 2,
+            -box.min.y,
+            -(box.max.z + box.min.z) / 2
+          );
+
+          resolve({ geometry: merged, texture });
+        },
+        undefined,
+        (error) => reject(error)
+      );
+    });
+  }
 
   // Small fixed offsets so a GROUP_SIZE cluster still reads as a few
   // separate people huddled together rather than one fat capsule.
@@ -288,13 +417,10 @@ if (!canUseWebGL()) {
   // crowdRadius / buildingCollisionRadius imported from lib/crowdMath.js.
 
   // Thin wrapper over the pure, unit-tested computeFormationSlot
-  // (lib/formation.js) that injects this game's live elapsedTime clock,
-  // so every existing call site below keeps its original 6-argument
-  // shape. Writing into `out` instead of allocating matters here: this
-  // runs once per group every frame, and repeated per-frame allocation
-  // (here and in crowdCentroid) was found to cause periodic GC pauses —
-  // the textbook signature of frame-rate "jumping"/stutter rather than
-  // uniformly-low FPS.
+  // (lib/formation.js) that injects this game's live elapsedTime clock.
+  // Writing into `out` instead of allocating matters here: this runs once
+  // per group every frame, and per-frame allocation (here and in
+  // crowdCentroid) causes GC-pause stutter.
   function computeSlotPosition(index, centerX, centerZ, facingAngle, moveBlend, out) {
     return computeFormationSlot(index, centerX, centerZ, facingAngle, moveBlend, elapsedTime, out);
   }
@@ -326,20 +452,28 @@ if (!canUseWebGL()) {
   // along its own surface, and only its back faces peek out from behind
   // the first copy's front faces, reading as an outline). No
   // postprocessing pass needed, so it costs nothing beyond one extra
-  // cheap (unlit, no toon shading) InstancedMesh per crowd.
-  const OUTLINE_SCALE = 1.18;
+  // cheap (unlit, no toon shading) InstancedMesh per crowd. The character
+  // models are small and detailed (thin arms/legs/head), so this needs to
+  // stay small or the outline hull swallows most of the model in black.
+  const OUTLINE_SCALE = 1.045;
 
-  function makeOutlineMesh(capacity) {
+  function makeOutlineMesh(geometry, capacity) {
     const material = new THREE.MeshBasicMaterial({ color: 0x1a1a1a, side: THREE.BackSide });
-    const mesh = new THREE.InstancedMesh(personGeometry, material, capacity);
+    const mesh = new THREE.InstancedMesh(geometry, material, capacity);
     mesh.frustumCulled = false;
     scene.add(mesh);
     return mesh;
   }
 
-  function makeCrowdMesh(color, capacity) {
-    const material = makeToonMaterial({ color, flatShading: true });
-    const mesh = new THREE.InstancedMesh(personGeometry, material, capacity);
+  function makeCrowdMesh(geometry, texture, color, capacity) {
+    // These meshes carry real authored vertex normals, so flatShading
+    // stays off to preserve smooth cartoon bands (unlike the primitive
+    // shapes elsewhere in the scene, which use flatShading: true).
+    // Tint is blended toward white so the texture's own skin/hair/
+    // clothing variation stays visible per crowd color.
+    const tint = new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.6);
+    const material = makeToonMaterial({ color: tint, map: texture || null, flatShading: false });
+    const mesh = new THREE.InstancedMesh(geometry, material, capacity);
     // Instances are placed via per-instance matrices at their world
     // position while the mesh itself never moves from local origin, so
     // Three.js's default frustum-culling bounds (computed from the base
@@ -371,15 +505,25 @@ if (!canUseWebGL()) {
     return groups;
   }
 
+  // Loaded once up front so every crowd (player + all rivals) can be
+  // created synchronously below — an InstancedMesh needs its geometry at
+  // construction time, so we wait for every .glb to finish before
+  // building any crowd.
+  const characterAssets = await Promise.all(CHARACTER_FILES.map(loadCharacterAsset));
+  function characterFor(index) {
+    return characterAssets[index % characterAssets.length];
+  }
+
   // --- Player ---
 
+  const playerCharacter = characterFor(0);
   const player = {
     position: new THREE.Vector3(0, 0, 0),
     count: 15,
     facing: 0,
     moveBlend: 0,
-    mesh: makeCrowdMesh(0x3a7bd5, PLAYER_CAP),
-    outlineMesh: makeOutlineMesh(PLAYER_CAP),
+    mesh: makeCrowdMesh(playerCharacter.geometry, playerCharacter.texture, 0x3a7bd5, PLAYER_CAP),
+    outlineMesh: makeOutlineMesh(playerCharacter.geometry, PLAYER_CAP),
     groups: [],
   };
   player.groups = spawnGroups(player.count, player.position.x, player.position.z);
@@ -403,8 +547,9 @@ if (!canUseWebGL()) {
   for (let i = 0; i < RIVAL_COUNT; i++) {
     const count = 2 + i * 3 + Math.floor(Math.random() * 4);
     const pos = randomRoadPosition(buildingCollisionRadius(count));
-    const mesh = makeCrowdMesh(rivalColors[i], 300);
-    const outlineMesh = makeOutlineMesh(300);
+    const rivalCharacter = characterFor(i + 1);
+    const mesh = makeCrowdMesh(rivalCharacter.geometry, rivalCharacter.texture, rivalColors[i], 300);
+    const outlineMesh = makeOutlineMesh(rivalCharacter.geometry, 300);
     const groups = spawnGroups(count, pos.x, pos.z);
     rivalCrowds.push({
       name: rivalNames[i],
@@ -522,10 +667,8 @@ if (!canUseWebGL()) {
   }
 
   // --- Touch input: on-screen virtual joystick for mobile ---
-  // Separate from (and not a replacement for) the whole-screen
-  // pointer-follow control removed earlier — this only responds to drags
-  // starting on the joystick element itself, and is hidden entirely on
-  // non-touch (fine) pointers via CSS.
+  // Only responds to drags starting on the joystick element itself, and
+  // is hidden entirely on non-touch (fine) pointers via CSS.
 
   const joystickEl = document.getElementById('joystick');
   const joystickKnobEl = document.getElementById('joystick-knob');
@@ -673,9 +816,9 @@ if (!canUseWebGL()) {
 
   // Rivals also absorb each other on contact (bigger wins, same rule as
   // the player) — the loser's groups transfer straight into the winner's
-  // array (no destroy/recreate — they're plain state, not physics
-  // bodies), so the absorbed soldiers keep their exact position/velocity
-  // and visibly run to join the winner's new formation on later frames.
+  // array (no destroy/recreate — they're plain state), so the absorbed
+  // soldiers keep their exact position/velocity and visibly run to join
+  // the winner's new formation on later frames.
   function checkRivalVsRivalCollisions() {
     let resolvedAny = true;
     while (resolvedAny) {
@@ -755,16 +898,13 @@ if (!canUseWebGL()) {
   }
 
   // --- Spatial hash + boids-style separation ---
-  // Replaces a full physics engine's broadphase for "which groups are
-  // near this one" queries (lib/spatialHash.js), and is what gives
-  // jostle/knockback now: groups (regardless of which crowd owns them,
-  // same as the removed physics engine treated every soldier) push apart
-  // from close neighbors (lib/separation.js) — no rigid-body solver, no
-  // gravity, no broadphase/narrowphase pipeline. Rebuilt fresh every
-  // frame (cheap — O(number of groups)) rather than incrementally
-  // maintained, since groups move every frame anyway. CELL_SIZE is a
-  // little larger than SEPARATION_RADIUS so a 3x3 cell neighborhood
-  // always covers it.
+  // Gives jostle/knockback: groups (regardless of which crowd owns them)
+  // push apart from close neighbors within SEPARATION_RADIUS, found via
+  // the spatial hash's 3x3 cell neighborhood query (lib/spatialHash.js,
+  // lib/separation.js). Rebuilt fresh every frame (cheap — O(number of
+  // groups)) rather than incrementally maintained, since groups move
+  // every frame anyway. CELL_SIZE is a little larger than
+  // SEPARATION_RADIUS so a 3x3 cell neighborhood always covers it.
 
   const CELL_SIZE = 1.2;
   const SEPARATION_RADIUS = 0.9;
@@ -804,9 +944,8 @@ if (!canUseWebGL()) {
       // No teleport/snap fallback: however far behind a group has fallen,
       // it always moves there continuously — steerSpeedForDistance's
       // catch-up ramp (capped at CATCHUP_MAX_SPEED) is the only recovery
-      // mechanism now. A group can in principle stay stuck longer against
-      // an awkward building corner than it could before, but it will
-      // never visibly pop from one position to another.
+      // mechanism, so a group never visibly pops from one position to
+      // another, even if stuck against an awkward building corner.
       let steerX = 0;
       let steerZ = 0;
       if (dist > 0.02) {
@@ -885,10 +1024,10 @@ if (!canUseWebGL()) {
         const lean = Math.sin(elapsedTime * 5 + seed) * 0.12;
         dummy.position.set(
           group.position.x + offset.x,
-          PERSON_HALF_HEIGHT + bob,
+          bob,
           group.position.z + offset.z
         );
-        dummy.rotation.y = crowd.facing + lean;
+        dummy.rotation.y = crowd.facing + lean + CHARACTER_FORWARD_OFFSET;
 
         dummy.scale.setScalar(1);
         dummy.updateMatrix();

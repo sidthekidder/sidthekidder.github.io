@@ -15,8 +15,7 @@
  * returns it too, so callers can either use the return value or ignore it
  * and read `out` — this avoids a fresh allocation on every call, which
  * matters since this runs once per group every single frame in the game's
- * hot path (see the note on GC-driven frame-rate "jumping" this was
- * originally written to fix).
+ * hot path.
  */
 export function computeFormationSlot(
   index,
