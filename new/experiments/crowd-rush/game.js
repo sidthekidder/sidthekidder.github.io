@@ -378,6 +378,76 @@ if (!canUseWebGL()) {
     return { x: dx / len, z: dz / len };
   }
 
+  // --- Touch input: on-screen virtual joystick for mobile ---
+  // Separate from (and not a replacement for) the whole-screen
+  // pointer-follow control removed earlier — this only responds to drags
+  // starting on the joystick element itself, and is hidden entirely on
+  // non-touch (fine) pointers via CSS.
+
+  const joystickEl = document.getElementById('joystick');
+  const joystickKnobEl = document.getElementById('joystick-knob');
+  const JOYSTICK_MAX_RADIUS = 45;
+  const JOYSTICK_DEADZONE = 8;
+
+  let joystickPointerId = null;
+  let joystickDirX = 0;
+  let joystickDirZ = 0;
+
+  function updateJoystickFromEvent(clientX, clientY) {
+    const rect = joystickEl.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    let dx = clientX - centerX;
+    let dy = clientY - centerY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > JOYSTICK_MAX_RADIUS) {
+      dx = (dx / dist) * JOYSTICK_MAX_RADIUS;
+      dy = (dy / dist) * JOYSTICK_MAX_RADIUS;
+    }
+    joystickKnobEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    if (Math.sqrt(dx * dx + dy * dy) < JOYSTICK_DEADZONE) {
+      joystickDirX = 0;
+      joystickDirZ = 0;
+    } else {
+      // dy grows downward on screen, matching how W/ArrowUp already map to
+      // negative dz ("forward" for this fixed camera) — no sign flip needed.
+      joystickDirX = dx / JOYSTICK_MAX_RADIUS;
+      joystickDirZ = dy / JOYSTICK_MAX_RADIUS;
+    }
+  }
+
+  function resetJoystick() {
+    joystickPointerId = null;
+    joystickDirX = 0;
+    joystickDirZ = 0;
+    joystickKnobEl.style.transform = 'translate(-50%, -50%)';
+  }
+
+  joystickEl.addEventListener('pointerdown', (e) => {
+    joystickPointerId = e.pointerId;
+    joystickEl.setPointerCapture(e.pointerId);
+    updateJoystickFromEvent(e.clientX, e.clientY);
+  });
+  joystickEl.addEventListener('pointermove', (e) => {
+    if (e.pointerId === joystickPointerId) {
+      updateJoystickFromEvent(e.clientX, e.clientY);
+    }
+  });
+  joystickEl.addEventListener('pointerup', (e) => {
+    if (e.pointerId === joystickPointerId) resetJoystick();
+  });
+  joystickEl.addEventListener('pointercancel', (e) => {
+    if (e.pointerId === joystickPointerId) resetJoystick();
+  });
+  window.addEventListener('blur', resetJoystick);
+
+  function joystickDirection() {
+    if (joystickPointerId === null) return null;
+    const len = Math.sqrt(joystickDirX * joystickDirX + joystickDirZ * joystickDirZ);
+    if (len < 0.001) return null;
+    return { x: joystickDirX / len, z: joystickDirZ / len };
+  }
+
   // --- Game state / loop ---
 
   let timeLeft = ROUND_SECONDS;
@@ -568,7 +638,7 @@ if (!canUseWebGL()) {
       // logical target leads the real crowd just enough to feel
       // responsive without the gap growing large enough to be visible.
       const playerSpeed = 6.5;
-      const keyDir = keyboardDirection();
+      const keyDir = keyboardDirection() || joystickDirection();
       const playerBlendRate = Math.min(1, delta * 4);
       player.moveBlend += ((keyDir ? 1 : 0) - player.moveBlend) * playerBlendRate;
       if (keyDir) {

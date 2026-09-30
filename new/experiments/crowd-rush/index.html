@@ -81,6 +81,52 @@
     font-weight: 700;
     cursor: pointer;
   }
+
+  /* Virtual joystick — touch-only control, shown just for coarse
+     (touch-primary) pointers so desktop/keyboard players never see it. */
+  .joystick {
+    display: none;
+    position: fixed;
+    bottom: 2rem;
+    left: 2rem;
+    width: 110px;
+    height: 110px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    touch-action: none;
+    z-index: 15;
+  }
+  @media (pointer: coarse) {
+    .joystick { display: block; }
+  }
+  .joystick-knob {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  /* Narrow viewports: the centered HUD and top-right leaderboard would
+     otherwise overlap (HUD spans past 270px on a 375px-wide screen while
+     the leaderboard starts around 210px). Shrink both so they clear. */
+  @media (max-width: 480px) {
+    .hud { gap: 0.5rem; top: 1rem; }
+    .hud-timer { padding: 0.35rem 0.7rem; font-size: 1rem; min-width: 3.5rem; }
+    .hud-count { padding: 0.35rem 0.85rem; font-size: 1.1rem; }
+    .leaderboard {
+      top: 1rem;
+      right: 0.75rem;
+      min-width: 96px;
+      padding: 0.5rem 0.65rem;
+      font-size: 0.7rem;
+    }
+  }
 </style>
 </head>
 <body>
@@ -90,6 +136,9 @@
     <div class="hud-count" id="hud-count">5</div>
   </div>
   <div class="leaderboard" id="leaderboard"></div>
+  <div class="joystick" id="joystick">
+    <div class="joystick-knob" id="joystick-knob"></div>
+  </div>
   <div class="end-screen" id="end-screen">
     <div class="end-title" id="end-title">Time's Up!</div>
     <div class="end-score" id="end-score">Final size: 0</div>
