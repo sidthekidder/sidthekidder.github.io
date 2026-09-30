@@ -189,7 +189,14 @@ if (!canUseWebGL()) {
   // the facing direction (moveBlend 1). This is a target for physics
   // *steering*, not a direct position write — the solver has the final
   // say once collisions with neighbors/buildings are factored in.
-  function computeSlotPosition(index, centerX, centerZ, facingAngle, moveBlend) {
+  //
+  // Writes into `out` instead of returning a fresh object — this runs
+  // once per group every single frame (steerCrowd's hot path), and a
+  // researched pass at the "jumping" frame rate found that repeated
+  // per-frame allocation here (and in crowdCentroid) was producing
+  // periodic GC pauses, which is the textbook signature of stutter/
+  // jumping rather than uniformly-low FPS.
+  function computeSlotPosition(index, centerX, centerZ, facingAngle, moveBlend, out) {
     let ring = 0;
     let ringStart = 0;
     let ringCapacity = 1;
@@ -216,20 +223,20 @@ if (!canUseWebGL()) {
     const trailX = centerX - forwardX * depthOffset + rightX * lateralOffset;
     const trailZ = centerZ - forwardZ * depthOffset + rightZ * lateralOffset;
 
-    return {
-      x: circleX + (trailX - circleX) * moveBlend,
-      z: circleZ + (trailZ - circleZ) * moveBlend,
-    };
+    out.x = circleX + (trailX - circleX) * moveBlend;
+    out.z = circleZ + (trailZ - circleZ) * moveBlend;
+    return out;
   }
 
   // The crowd's real visual center — the size-weighted average of where
   // its groups' physics bodies actually are, not the abstract WASD-driven
   // intent point (crowd.position). Used for anything that should reflect
   // what's actually on screen: collision/contact checks and the camera.
-  // Left pure and cheap (called at most ~11 times per frame across all
-  // crowds put together) rather than cached, so it's always exactly
-  // correct.
-  function crowdCentroid(crowd) {
+  //
+  // Pass `out` to write into an existing object instead of allocating —
+  // matters most in checkRivalVsRivalCollisions, which used to call this
+  // fresh for the same rival on every pair comparison in its O(n^2) loop.
+  function crowdCentroid(crowd, out) {
     let sumX = 0;
     let sumZ = 0;
     let totalSize = 0;
@@ -239,7 +246,10 @@ if (!canUseWebGL()) {
       totalSize += group.size;
     });
     const n = totalSize || 1;
-    return { x: sumX / n, z: sumZ / n };
+    const target = out || { x: 0, z: 0 };
+    target.x = sumX / n;
+    target.z = sumZ / n;
+    return target;
   }
 
   function makeGroupBody(x, z) {
@@ -280,7 +290,7 @@ if (!canUseWebGL()) {
     let placed = 0;
     while (placed < count) {
       const size = Math.min(GROUP_SIZE, count - placed);
-      const slot = computeSlotPosition(placed, x, z, 0, 0);
+      const slot = computeSlotPosition(placed, x, z, 0, 0, { x: 0, z: 0 });
       groups.push({ body: makeGroupBody(slot.x, slot.z), size });
       placed += size;
     }
@@ -346,10 +356,12 @@ if (!canUseWebGL()) {
   // the centroid of every real body (rather than just the leader) also
   // means one stuck straggler can't drag the camera off if the rest of
   // the crowd has moved on.
+  const cameraCentroidScratch = { x: 0, z: 0 };
+
   function updateCamera() {
     const behind = 14;
     const height = 16;
-    const centroid = crowdCentroid(player);
+    const centroid = crowdCentroid(player, cameraCentroidScratch);
     camera.position.set(centroid.x, height, centroid.z + behind);
     camera.lookAt(centroid.x, 0, centroid.z - 4);
   }
@@ -556,13 +568,19 @@ if (!canUseWebGL()) {
     let resolvedAny = true;
     while (resolvedAny) {
       resolvedAny = false;
+      // Each rival's centroid is the same for every pair it's checked
+      // against within this pass — compute it once per rival here rather
+      // than recomputing it from scratch on every pair comparison below
+      // (was up to ~45 redundant recomputations per pass at 10 rivals).
+      const centroids = rivalCrowds.map((r) => crowdCentroid(r));
       for (let i = 0; i < rivalCrowds.length && !resolvedAny; i++) {
         for (let j = i + 1; j < rivalCrowds.length; j++) {
           const a = rivalCrowds[i];
           const b = rivalCrowds[j];
-          const centroidA = crowdCentroid(a);
-          const centroidB = crowdCentroid(b);
-          const dist = Math.hypot(centroidA.x - centroidB.x, centroidA.z - centroidB.z);
+          const dist = Math.hypot(
+            centroids[i].x - centroids[j].x,
+            centroids[i].z - centroids[j].z
+          );
           if (dist < crowdRadius(a.count) + crowdRadius(b.count)) {
             const winner = a.count >= b.count ? a : b;
             const loser = a.count >= b.count ? b : a;
@@ -578,11 +596,14 @@ if (!canUseWebGL()) {
     }
   }
 
+  const playerCollisionCentroidScratch = { x: 0, z: 0 };
+  const rivalCollisionCentroidScratch = { x: 0, z: 0 };
+
   function checkCollisions() {
-    const playerCentroid = crowdCentroid(player);
+    const playerCentroid = crowdCentroid(player, playerCollisionCentroidScratch);
     for (let i = rivalCrowds.length - 1; i >= 0; i--) {
       const r = rivalCrowds[i];
-      const rivalCentroid = crowdCentroid(r);
+      const rivalCentroid = crowdCentroid(r, rivalCollisionCentroidScratch);
       const dist = Math.hypot(
         playerCentroid.x - rivalCentroid.x,
         playerCentroid.z - rivalCentroid.z
@@ -608,6 +629,7 @@ if (!canUseWebGL()) {
   }
 
   const dummy = new THREE.Object3D();
+  const slotScratch = { x: 0, z: 0 };
 
   // Sets each group's steering intent (velocity toward the formation slot
   // of its first individual index) before the physics step — the solver
@@ -632,7 +654,8 @@ if (!canUseWebGL()) {
         crowd.position.x,
         crowd.position.z,
         crowd.facing,
-        crowd.moveBlend
+        crowd.moveBlend,
+        slotScratch
       );
       const dx = slot.x - body.position.x;
       const dz = slot.z - body.position.z;
