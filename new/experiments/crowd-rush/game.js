@@ -69,16 +69,6 @@ if (!canUseWebGL()) {
   // verified against real frame-rate in a browser.
 
   const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
-  // More solver iterations = stiffer contact resolution, but this is the
-  // single most expensive knob in the whole simulation (multiplies cost
-  // per contact, and there can be hundreds of contacts at once). 20 was
-  // too aggressive and tanked frame rate badly enough that movement felt
-  // broken; 12 is a smaller step up from cannon-es's default of 10.
-  world.solver.iterations = 12;
-  // Low restitution keeps jostles from bouncing/jittering; moderate
-  // friction stops soldiers sliding past each other after a knock.
-  world.defaultContactMaterial.restitution = 0.05;
-  world.defaultContactMaterial.friction = 0.4;
 
   const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
   groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
@@ -216,10 +206,7 @@ if (!canUseWebGL()) {
       mass: 1,
       shape: new CANNON.Sphere(SOLDIER_RADIUS),
       position: new CANNON.Vec3(x, 0.5 + Math.random() * 0.5, z),
-      // Between the original 0.85 (killed jostle velocity almost
-      // instantly) and the 0.5 that replaced it (too little resistance,
-      // made the solver work harder to keep a dense crowd stable).
-      linearDamping: 0.65,
+      linearDamping: 0.85,
       fixedRotation: true,
     });
     world.addBody(body);
@@ -571,20 +558,8 @@ if (!canUseWebGL()) {
   // Sets each soldier's steering intent (velocity toward its formation
   // slot) before the physics step — the solver has the final say on
   // actual motion once collisions with neighbors/buildings are resolved.
-  //
-  // This BLENDS toward the desired velocity rather than snapping to it
-  // (steerResponsiveness < 1). A hard set here would completely erase
-  // whatever knockback velocity a collision just produced before the
-  // solver's result ever gets a chance to read on screen — the jostle
-  // would be computed correctly but visually disappear every frame.
-  // Blending lets a knock persist and decay over several frames instead.
   function steerCrowd(crowd) {
     const steerSpeed = 6;
-    // Raised from 0.3 — that was letting the leader body ramp up to speed
-    // too slowly, compounding with the perf hit above into movement that
-    // felt barely responsive. Still < 1 so a jostle isn't erased in one
-    // frame, just not so low that steering itself feels sluggish.
-    const steerResponsiveness = 0.5;
     crowd.bodies.forEach((body, i) => {
       const slot = computeSlotPosition(
         i,
@@ -598,10 +573,8 @@ if (!canUseWebGL()) {
       const dist = Math.sqrt(dx * dx + dz * dz);
       if (dist > 0.02) {
         const speed = Math.min(steerSpeed, dist * 8);
-        const desiredVX = (dx / dist) * speed;
-        const desiredVZ = (dz / dist) * speed;
-        body.velocity.x += (desiredVX - body.velocity.x) * steerResponsiveness;
-        body.velocity.z += (desiredVZ - body.velocity.z) * steerResponsiveness;
+        body.velocity.x = (dx / dist) * speed;
+        body.velocity.z = (dz / dist) * speed;
       } else {
         body.velocity.x *= 0.5;
         body.velocity.z *= 0.5;
