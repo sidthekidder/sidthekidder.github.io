@@ -17,19 +17,33 @@ body {
   overflow-x: hidden;
 }
 
-.chapter {
+.particles-bg {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.gallery {
   position: relative;
-  height: 100vh;
+  z-index: 1;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 3rem;
+  padding: 4rem 2rem;
   text-align: center;
-  padding: 2rem;
+  background:
+    radial-gradient(ellipse 60% 50% at 20% 15%, rgba(124, 252, 174, 0.12), transparent),
+    radial-gradient(ellipse 50% 45% at 85% 80%, rgba(255, 79, 216, 0.1), transparent);
 }
 
-.chapter-title {
-  font-size: clamp(3rem, 12vw, 8rem);
+.gallery-title {
+  font-size: clamp(2.5rem, 9vw, 5.5rem);
   font-weight: 700;
   letter-spacing: -0.03em;
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
@@ -38,92 +52,63 @@ body {
   color: transparent;
 }
 
-.chapter-subtitle {
+.gallery-subtitle {
   margin-top: 1rem;
-  font-size: clamp(1rem, 2vw, 1.5rem);
+  font-size: clamp(1rem, 2vw, 1.25rem);
   color: var(--muted);
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
-.js .chapter-title,
-.js .chapter-subtitle {
+.js .gallery-title,
+.js .gallery-subtitle {
   opacity: 0;
-  animation: chapter-in 1s ease-out forwards;
+  animation: gallery-in 0.9s ease-out forwards;
 }
 
-.js .chapter-subtitle {
-  animation-delay: 0.4s;
+.js .gallery-subtitle {
+  animation-delay: 0.25s;
 }
 
-@keyframes chapter-in {
-  from { opacity: 0; transform: translateY(40px); }
+@keyframes gallery-in {
+  from { opacity: 0; transform: translateY(30px); }
   to { opacity: 1; transform: translateY(0); }
-}
-
-.chapter-line {
-  max-width: 900px;
-  font-size: clamp(2rem, 7vw, 4.5rem);
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
-}
-
-.word {
-  display: inline-block;
-}
-
-.js .word {
-  opacity: 0;
-  transform: translateY(20px);
-  transition: opacity 0.4s ease, transform 0.4s ease;
-}
-
-.word.is-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.accent-word {
-  color: var(--accent);
-  text-shadow: 0 0 24px rgba(124, 252, 174, 0.45);
-}
-
-.scroll-cue {
-  position: absolute;
-  bottom: 2rem;
-  color: var(--muted);
-  font-size: 0.9rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  animation: bob 2s ease-in-out infinite;
-}
-
-@keyframes bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(8px); }
 }
 
 .tile-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 2rem;
-  padding: 4rem 2rem 8rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.75rem;
+  width: 100%;
   max-width: 1100px;
-  margin: 0 auto;
 }
 
 .tile {
+  position: relative;
   display: block;
+  overflow: hidden;
   text-decoration: none;
   color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
   padding: 2rem;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+
+.tile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), transparent 50%);
+  pointer-events: none;
 }
 
 .js .tile {
   opacity: 0;
-  transform: translateY(30px);
+  transform: translateY(24px);
 }
 
 .tile.is-visible {
@@ -134,9 +119,10 @@ body {
 
 .tile:hover {
   border-color: var(--accent);
-  background: rgba(255, 255, 255, 0.06);
-  transform: translateY(-4px);
-  transition: transform 0.3s ease, border-color 0.3s ease, background 0.3s ease;
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-6px) scale(1.015);
+  box-shadow: 0 0 40px rgba(124, 252, 174, 0.25);
+  transition: transform 0.3s ease, border-color 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
 }
 
 .tile-title {

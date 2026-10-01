@@ -1,5 +1,9 @@
 const tiles = document.querySelectorAll('[data-tile]');
 
+tiles.forEach((tile, i) => {
+  tile.style.transitionDelay = `${i * 0.08}s`;
+});
+
 if (typeof IntersectionObserver === 'undefined') {
   tiles.forEach((tile) => tile.classList.add('is-visible'));
 } else {
