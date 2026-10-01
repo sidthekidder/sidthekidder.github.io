@@ -666,9 +666,12 @@ if (!canUseWebGL()) {
     return { x: dx / len, z: dz / len };
   }
 
-  // --- Touch input: on-screen virtual joystick for mobile ---
-  // Only responds to drags starting on the joystick element itself, and
-  // is hidden entirely on non-touch (fine) pointers via CSS.
+  // --- Touch input: a floating virtual joystick, usable from anywhere on
+  // screen — a touch starting on empty game area spawns it centered on
+  // that point (CSS positions/animates it via left/top + .is-active).
+  // Touches on real UI (back link, end-of-round screen) are excluded so
+  // those stay tappable normally, and only touch pointers trigger it —
+  // mouse/pen pointers fall through to native behavior.
 
   const joystickEl = document.getElementById('joystick');
   const joystickKnobEl = document.getElementById('joystick-knob');
@@ -676,15 +679,18 @@ if (!canUseWebGL()) {
   const JOYSTICK_DEADZONE = 8;
 
   let joystickPointerId = null;
+  let joystickOriginX = 0;
+  let joystickOriginY = 0;
   let joystickDirX = 0;
   let joystickDirZ = 0;
 
+  function isJoystickExcluded(target) {
+    return !!target.closest('a, button, .end-screen');
+  }
+
   function updateJoystickFromEvent(clientX, clientY) {
-    const rect = joystickEl.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    let dx = clientX - centerX;
-    let dy = clientY - centerY;
+    let dx = clientX - joystickOriginX;
+    let dy = clientY - joystickOriginY;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist > JOYSTICK_MAX_RADIUS) {
       dx = (dx / dist) * JOYSTICK_MAX_RADIUS;
@@ -706,23 +712,31 @@ if (!canUseWebGL()) {
     joystickPointerId = null;
     joystickDirX = 0;
     joystickDirZ = 0;
+    joystickEl.classList.remove('is-active');
     joystickKnobEl.style.transform = 'translate(-50%, -50%)';
   }
 
-  joystickEl.addEventListener('pointerdown', (e) => {
+  window.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch' || joystickPointerId !== null || isJoystickExcluded(e.target)) {
+      return;
+    }
     joystickPointerId = e.pointerId;
-    joystickEl.setPointerCapture(e.pointerId);
-    updateJoystickFromEvent(e.clientX, e.clientY);
+    joystickOriginX = e.clientX;
+    joystickOriginY = e.clientY;
+    joystickEl.style.left = `${joystickOriginX}px`;
+    joystickEl.style.top = `${joystickOriginY}px`;
+    joystickEl.classList.add('is-active');
+    e.target.setPointerCapture(e.pointerId);
   });
-  joystickEl.addEventListener('pointermove', (e) => {
+  window.addEventListener('pointermove', (e) => {
     if (e.pointerId === joystickPointerId) {
       updateJoystickFromEvent(e.clientX, e.clientY);
     }
   });
-  joystickEl.addEventListener('pointerup', (e) => {
+  window.addEventListener('pointerup', (e) => {
     if (e.pointerId === joystickPointerId) resetJoystick();
   });
-  joystickEl.addEventListener('pointercancel', (e) => {
+  window.addEventListener('pointercancel', (e) => {
     if (e.pointerId === joystickPointerId) resetJoystick();
   });
   window.addEventListener('blur', resetJoystick);

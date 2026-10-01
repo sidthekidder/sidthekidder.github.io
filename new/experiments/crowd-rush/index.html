@@ -83,12 +83,14 @@
   }
 
   /* Virtual joystick — touch-only control, shown just for coarse
-     (touch-primary) pointers so desktop/keyboard players never see it. */
+     (touch-primary) pointers so desktop/keyboard players never see it.
+     Floats: game.js positions it via left/top on touch-down, anywhere
+     on screen, and toggles .is-active to fade it in/out. */
   .joystick {
     display: none;
     position: fixed;
-    bottom: 2rem;
-    left: 2rem;
+    top: 0;
+    left: 0;
     width: 110px;
     height: 110px;
     border-radius: 50%;
@@ -96,9 +98,15 @@
     border: 1px solid rgba(255, 255, 255, 0.18);
     touch-action: none;
     z-index: 15;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+    transition: opacity 0.15s ease;
   }
   @media (pointer: coarse) {
     .joystick { display: block; }
+  }
+  .joystick.is-active {
+    opacity: 1;
   }
   .joystick-knob {
     position: absolute;
