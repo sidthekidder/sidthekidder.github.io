@@ -604,7 +604,7 @@ if (!canUseWebGL()) {
   const PICKUP_LABEL_REFRESH_INTERVAL = 0.5;
 
   const pickupGeometry = new THREE.OctahedronGeometry(0.35, 0);
-  const activePickups = []; // { type, mesh, label, x, z, spinSeed }
+  const activePickups = []; // { type, root, gem, glow, label, x, z, spinSeed }
   const pickupRespawnTimers = [];
   let pickupLabelRefreshTimer = 0;
 
@@ -618,16 +618,14 @@ if (!canUseWebGL()) {
     return `${pct >= 0 ? '+' : ''}${pct}%`;
   }
 
-  // A small always-camera-facing canvas-texture sprite, parented to the
-  // pickup mesh (a local Y offset is unaffected by the mesh's own Y-axis
-  // spin, so no extra per-frame positioning is needed).
+  // A small always-camera-facing canvas-texture sprite.
   function makePickupLabel() {
     const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 64;
+    canvas.width = 160;
+    canvas.height = 80;
     const texture = new THREE.CanvasTexture(canvas);
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
-    sprite.scale.set(1, 0.5, 1);
+    sprite.scale.set(1.3, 0.65, 1);
     sprite.position.set(0, 0.75, 0);
     return { sprite, canvas, texture };
   }
@@ -635,10 +633,10 @@ if (!canUseWebGL()) {
   function drawPickupLabel(label, text) {
     const ctx = label.canvas.getContext('2d');
     ctx.clearRect(0, 0, label.canvas.width, label.canvas.height);
-    ctx.font = 'bold 30px sans-serif';
+    ctx.font = 'bold 44px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.lineWidth = 6;
+    ctx.lineWidth = 8;
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.strokeText(text, label.canvas.width / 2, label.canvas.height / 2);
     ctx.fillStyle = '#ffffff';
@@ -654,23 +652,57 @@ if (!canUseWebGL()) {
     });
   }
 
+  // Soft halo behind the gem — a radial-gradient canvas sprite with
+  // additive blending, the standard cheap "glow" trick that needs no
+  // postprocessing bloom pass.
+  function makeGlowSprite(color) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const c = new THREE.Color(color);
+    const rgb = `${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(c.b * 255)}`;
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, `rgba(${rgb}, 0.9)`);
+    gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    const texture = new THREE.CanvasTexture(canvas);
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })
+    );
+    sprite.scale.set(1.6, 1.6, 1);
+    return sprite;
+  }
+
   function spawnPickup() {
     const type = PICKUP_TYPES[Math.floor(Math.random() * PICKUP_TYPES.length)];
     const pos = randomRoadPosition(0.5);
-    const mesh = new THREE.Mesh(pickupGeometry, new THREE.MeshBasicMaterial({ color: type.color }));
-    mesh.position.set(pos.x, 0.6, pos.z);
+
+    const root = new THREE.Group();
+    root.position.set(pos.x, 0.6, pos.z);
+
+    const glow = makeGlowSprite(type.color);
+    root.add(glow);
+
+    const gem = new THREE.Mesh(pickupGeometry, new THREE.MeshBasicMaterial({ color: type.color }));
+    root.add(gem);
+
     const label = makePickupLabel();
     drawPickupLabel(label, pickupPercentText(type, player.count));
-    mesh.add(label.sprite);
-    scene.add(mesh);
-    activePickups.push({ type, mesh, label, x: pos.x, z: pos.z, spinSeed: Math.random() * Math.PI * 2 });
+    root.add(label.sprite);
+
+    scene.add(root);
+    activePickups.push({ type, root, gem, glow, label, x: pos.x, z: pos.z, spinSeed: Math.random() * Math.PI * 2 });
   }
 
   for (let i = 0; i < PICKUP_COUNT; i++) spawnPickup();
 
   function removePickup(pickup) {
-    scene.remove(pickup.mesh);
-    pickup.mesh.material.dispose();
+    scene.remove(pickup.root);
+    pickup.gem.material.dispose();
+    pickup.glow.material.map.dispose();
+    pickup.glow.material.dispose();
     pickup.label.texture.dispose();
     pickup.label.sprite.material.dispose();
     activePickups.splice(activePickups.indexOf(pickup), 1);
@@ -679,8 +711,11 @@ if (!canUseWebGL()) {
 
   function updatePickups(delta) {
     activePickups.forEach((p) => {
-      p.mesh.rotation.y += delta * 1.5;
-      p.mesh.position.y = 0.6 + Math.sin(elapsedTime * 2 + p.spinSeed) * 0.12;
+      p.gem.rotation.y += delta * 1.5;
+      p.root.position.y = 0.6 + Math.sin(elapsedTime * 2 + p.spinSeed) * 0.12;
+      const pulse = 1 + Math.sin(elapsedTime * 3 + p.spinSeed) * 0.15;
+      p.gem.scale.setScalar(pulse);
+      p.glow.scale.set(1.6 * pulse, 1.6 * pulse, 1);
     });
 
     pickupLabelRefreshTimer -= delta;
@@ -698,6 +733,40 @@ if (!canUseWebGL()) {
     }
   }
 
+  // Adds `amount` worth of new individuals (as GROUP_SIZE-sized groups,
+  // same as initial spawning) near (x, z) so a crowd that just grew from
+  // a pickup visibly gains that many rendered soldiers, not just a
+  // bigger HUD number.
+  function addGroupsAtPosition(groups, amount, x, z) {
+    let placed = 0;
+    while (placed < amount) {
+      const size = Math.min(GROUP_SIZE, amount - placed);
+      groups.push({
+        position: { x: x + (Math.random() - 0.5) * 0.6, z: z + (Math.random() - 0.5) * 0.6 },
+        velocity: { x: 0, z: 0 },
+        size,
+      });
+      placed += size;
+    }
+  }
+
+  // Removes `amount` worth of individuals from the end of `groups`
+  // (shrinking/popping groups as needed) so a shrinking crowd visibly
+  // loses that many rendered soldiers.
+  function removeCountFromGroups(groups, amount) {
+    let remaining = amount;
+    while (remaining > 0 && groups.length > 0) {
+      const last = groups[groups.length - 1];
+      if (last.size <= remaining) {
+        remaining -= last.size;
+        groups.pop();
+      } else {
+        last.size -= remaining;
+        remaining = 0;
+      }
+    }
+  }
+
   const pickupCollisionCentroidScratch = { x: 0, z: 0 };
 
   function resolvePickupsForCrowd(crowd) {
@@ -706,7 +775,15 @@ if (!canUseWebGL()) {
       const p = activePickups[i];
       const dist = Math.hypot(centroid.x - p.x, centroid.z - p.z);
       if (dist < crowdRadius(crowd.count) + PICKUP_RADIUS) {
-        crowd.count = Math.max(1, p.type.apply(crowd.count));
+        const oldCount = crowd.count;
+        const newCount = Math.max(1, p.type.apply(oldCount));
+        crowd.count = newCount;
+        const delta = newCount - oldCount;
+        if (delta > 0) {
+          addGroupsAtPosition(crowd.groups, delta, p.x, p.z);
+        } else if (delta < 0) {
+          removeCountFromGroups(crowd.groups, -delta);
+        }
         spawnBurst(p.x, p.z, p.type.color);
         if (p.type.key === 'add' || p.type.key === 'mult') {
           playPickupGoodSound();
