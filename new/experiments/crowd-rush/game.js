@@ -92,6 +92,16 @@ if (!canUseWebGL()) {
     playTone(320, 720, 0.12, 'triangle', 0.15);
   }
 
+  function playPickupGoodSound() {
+    ensureAudioResumed();
+    playTone(500, 900, 0.18, 'sine', 0.18);
+  }
+
+  function playPickupBadSound() {
+    ensureAudioResumed();
+    playTone(500, 240, 0.22, 'sawtooth', 0.15);
+  }
+
   function playDefeatSound() {
     ensureAudioResumed();
     playTone(420, 110, 0.35, 'sawtooth', 0.2);
@@ -566,6 +576,153 @@ if (!canUseWebGL()) {
     });
   }
 
+  // --- Pickups: risk/reward orbs scattered on the roads. Collectible by
+  // any crowd (player or rival — a shared risk, not a player-only
+  // snowball), uniform odds across all 4 effects. Count is always
+  // clamped to a minimum of 1 so a bad pickup can't zero a crowd out.
+
+  // A flat +/-10 is a huge swing on a crowd of 15 but noise on a crowd of
+  // 200, so the flat types scale by bucket instead of a fixed amount —
+  // the multiplier types (1.5x / 1.5÷) don't need this, a percentage is
+  // already proportional at any size.
+  function scaledPickupDelta(count) {
+    if (count < 30) return 10;
+    if (count < 80) return 20;
+    if (count < 200) return 40;
+    return 80;
+  }
+
+  const PICKUP_TYPES = [
+    { key: 'add', color: 0x4ade80, apply: (count) => count + scaledPickupDelta(count) },
+    { key: 'sub', color: 0xef4444, apply: (count) => count - scaledPickupDelta(count) },
+    { key: 'mult', color: 0xf5c518, apply: (count) => Math.round(count * 1.5) },
+    { key: 'div', color: 0xa855f7, apply: (count) => Math.round(count / 1.5) },
+  ];
+  const PICKUP_COUNT = 7;
+  const PICKUP_RADIUS = 0.9;
+  const PICKUP_RESPAWN_DELAY = 4;
+  const PICKUP_LABEL_REFRESH_INTERVAL = 0.5;
+
+  const pickupGeometry = new THREE.OctahedronGeometry(0.35, 0);
+  const activePickups = []; // { type, mesh, label, x, z, spinSeed }
+  const pickupRespawnTimers = [];
+  let pickupLabelRefreshTimer = 0;
+
+  // Percentage this type's effect represents right now, relative to
+  // `referenceCount` — shown on the pickup's label instead of a raw
+  // number so it reads the same way regardless of the flat types'
+  // current bucket.
+  function pickupPercentText(type, referenceCount) {
+    const after = Math.max(1, type.apply(referenceCount));
+    const pct = Math.round(((after - referenceCount) / referenceCount) * 100);
+    return `${pct >= 0 ? '+' : ''}${pct}%`;
+  }
+
+  // A small always-camera-facing canvas-texture sprite, parented to the
+  // pickup mesh (a local Y offset is unaffected by the mesh's own Y-axis
+  // spin, so no extra per-frame positioning is needed).
+  function makePickupLabel() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 64;
+    const texture = new THREE.CanvasTexture(canvas);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
+    sprite.scale.set(1, 0.5, 1);
+    sprite.position.set(0, 0.75, 0);
+    return { sprite, canvas, texture };
+  }
+
+  function drawPickupLabel(label, text) {
+    const ctx = label.canvas.getContext('2d');
+    ctx.clearRect(0, 0, label.canvas.width, label.canvas.height);
+    ctx.font = 'bold 30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.strokeText(text, label.canvas.width / 2, label.canvas.height / 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(text, label.canvas.width / 2, label.canvas.height / 2);
+    label.texture.needsUpdate = true;
+  }
+
+  // Labels show the effect relative to the player's current count — the
+  // only count a human reads a label to decide about; rivals ignore them.
+  function refreshPickupLabels() {
+    activePickups.forEach((p) => {
+      drawPickupLabel(p.label, pickupPercentText(p.type, player.count));
+    });
+  }
+
+  function spawnPickup() {
+    const type = PICKUP_TYPES[Math.floor(Math.random() * PICKUP_TYPES.length)];
+    const pos = randomRoadPosition(0.5);
+    const mesh = new THREE.Mesh(pickupGeometry, new THREE.MeshBasicMaterial({ color: type.color }));
+    mesh.position.set(pos.x, 0.6, pos.z);
+    const label = makePickupLabel();
+    drawPickupLabel(label, pickupPercentText(type, player.count));
+    mesh.add(label.sprite);
+    scene.add(mesh);
+    activePickups.push({ type, mesh, label, x: pos.x, z: pos.z, spinSeed: Math.random() * Math.PI * 2 });
+  }
+
+  for (let i = 0; i < PICKUP_COUNT; i++) spawnPickup();
+
+  function removePickup(pickup) {
+    scene.remove(pickup.mesh);
+    pickup.mesh.material.dispose();
+    pickup.label.texture.dispose();
+    pickup.label.sprite.material.dispose();
+    activePickups.splice(activePickups.indexOf(pickup), 1);
+    pickupRespawnTimers.push(PICKUP_RESPAWN_DELAY);
+  }
+
+  function updatePickups(delta) {
+    activePickups.forEach((p) => {
+      p.mesh.rotation.y += delta * 1.5;
+      p.mesh.position.y = 0.6 + Math.sin(elapsedTime * 2 + p.spinSeed) * 0.12;
+    });
+
+    pickupLabelRefreshTimer -= delta;
+    if (pickupLabelRefreshTimer <= 0) {
+      pickupLabelRefreshTimer = PICKUP_LABEL_REFRESH_INTERVAL;
+      refreshPickupLabels();
+    }
+
+    for (let i = pickupRespawnTimers.length - 1; i >= 0; i--) {
+      pickupRespawnTimers[i] -= delta;
+      if (pickupRespawnTimers[i] <= 0) {
+        pickupRespawnTimers.splice(i, 1);
+        spawnPickup();
+      }
+    }
+  }
+
+  const pickupCollisionCentroidScratch = { x: 0, z: 0 };
+
+  function resolvePickupsForCrowd(crowd) {
+    const centroid = crowdCentroid(crowd, pickupCollisionCentroidScratch);
+    for (let i = activePickups.length - 1; i >= 0; i--) {
+      const p = activePickups[i];
+      const dist = Math.hypot(centroid.x - p.x, centroid.z - p.z);
+      if (dist < crowdRadius(crowd.count) + PICKUP_RADIUS) {
+        crowd.count = Math.max(1, p.type.apply(crowd.count));
+        spawnBurst(p.x, p.z, p.type.color);
+        if (p.type.key === 'add' || p.type.key === 'mult') {
+          playPickupGoodSound();
+        } else {
+          playPickupBadSound();
+        }
+        removePickup(p);
+      }
+    }
+  }
+
+  function checkPickupCollisions() {
+    resolvePickupsForCrowd(player);
+    rivalCrowds.forEach((r) => resolvePickupsForCrowd(r));
+  }
+
   // --- Camera follow ---
 
   // Follows the crowd's actual visual centroid, not the logical
@@ -584,14 +741,20 @@ if (!canUseWebGL()) {
   // the correct starting zoom instead of easing in from 1x.
   let cameraZoom = 1;
 
+  // Touch devices get a further-back base view (same screen space has to
+  // show the same arena on a much smaller display), independent of the
+  // crowd-size zoom below.
+  const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
+  const MOBILE_ZOOM_OUT = isTouchDevice ? 1.35 : 1;
+
   // `target` defaults to the player — but during the defeat sequence
   // (see pendingDefeat in animate()) the camera follows whichever rival
   // just absorbed the player instead, since player.groups is empty by
   // then and would otherwise centroid to nothing.
   function updateCamera(target, delta) {
     const crowd = target || player;
-    const baseBehind = 14;
-    const baseHeight = 16;
+    const baseBehind = 14 * MOBILE_ZOOM_OUT;
+    const baseHeight = 16 * MOBILE_ZOOM_OUT;
     const centroid = crowdCentroid(crowd, cameraCentroidScratch);
 
     const targetZoom = Math.min(
@@ -1129,6 +1292,7 @@ if (!canUseWebGL()) {
 
       rivalCrowds.forEach((r) => updateRivalAI(r, delta));
       checkRivalVsRivalCollisions();
+      checkPickupCollisions();
 
       checkCollisions();
 
@@ -1161,6 +1325,7 @@ if (!canUseWebGL()) {
     // round ends (a defeat or a final absorb) still finishes its
     // animation instead of freezing mid-fade.
     updateBursts(delta);
+    updatePickups(delta);
 
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
