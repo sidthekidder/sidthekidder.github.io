@@ -455,6 +455,31 @@ if (!canUseWebGL()) {
     return target;
   }
 
+  // A brief squash-and-stretch pulse on absorb: every instance in the
+  // crowd scales up then settles back to 1 over ABSORB_PULSE_DURATION,
+  // via a single decaying sine bump keyed off `elapsedTime` (same
+  // snapshot-based timing as the per-instance bob/lean in renderCrowd,
+  // so no extra delta plumbing is needed). Applied per-instance in
+  // renderCrowd (not on the InstancedMesh itself), since the mesh's own
+  // transform always stays at identity — instance positions are already
+  // world-space, so scaling the mesh would scale their distance from
+  // world origin too, not just their size.
+  const ABSORB_PULSE_DURATION = 0.35;
+
+  function triggerAbsorbPulse(crowd) {
+    crowd.absorbPulseStart = elapsedTime;
+  }
+
+  function absorbPulseScale(crowd) {
+    if (crowd.absorbPulseStart === undefined) return 1;
+    const t = (elapsedTime - crowd.absorbPulseStart) / ABSORB_PULSE_DURATION;
+    if (t >= 1) {
+      crowd.absorbPulseStart = undefined;
+      return 1;
+    }
+    return 1 + Math.sin(t * Math.PI) * (1 - t) * 0.4;
+  }
+
   // Cartoon-style outline: a second InstancedMesh sharing the same
   // geometry, rendered solid black with only its back faces visible and
   // scaled up slightly larger than the real mesh (the classic "inverted
@@ -824,6 +849,23 @@ if (!canUseWebGL()) {
   const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
   const MOBILE_ZOOM_OUT = isTouchDevice ? 1.35 : 1;
 
+  // A brief decaying random jitter on top of the normal camera position,
+  // for impact on big absorptions. `magnitude` scales with how big the
+  // steal was (see shakeMagnitudeForAbsorb), and decays linearly to 0
+  // over CAMERA_SHAKE_DURATION.
+  const CAMERA_SHAKE_DURATION = 0.3;
+  let cameraShakeTimer = 0;
+  let cameraShakeMagnitude = 0;
+
+  function triggerCameraShake(magnitude) {
+    cameraShakeTimer = CAMERA_SHAKE_DURATION;
+    cameraShakeMagnitude = magnitude;
+  }
+
+  function shakeMagnitudeForAbsorb(absorbedCount) {
+    return Math.min(0.9, absorbedCount * 0.03);
+  }
+
   // `target` defaults to the player — but during the defeat sequence
   // (see pendingDefeat in animate()) the camera follows whichever rival
   // just absorbed the player instead, since player.groups is empty by
@@ -842,6 +884,15 @@ if (!canUseWebGL()) {
     cameraZoom += (targetZoom - cameraZoom) * zoomEase;
 
     camera.position.set(centroid.x, baseHeight * cameraZoom, centroid.z + baseBehind * cameraZoom);
+
+    if (cameraShakeTimer > 0) {
+      cameraShakeTimer -= delta === undefined ? 0 : delta;
+      const strength = cameraShakeMagnitude * Math.max(0, cameraShakeTimer / CAMERA_SHAKE_DURATION);
+      camera.position.x += (Math.random() - 0.5) * strength;
+      camera.position.y += (Math.random() - 0.5) * strength * 0.5;
+      camera.position.z += (Math.random() - 0.5) * strength;
+    }
+
     camera.lookAt(centroid.x, 0, centroid.z - 4);
   }
   updateCamera();
@@ -1094,6 +1145,7 @@ if (!canUseWebGL()) {
             const loser = a.count >= b.count ? b : a;
             const loserCentroid = a.count >= b.count ? centroids[j] : centroids[i];
             spawnBurst(loserCentroid.x, loserCentroid.z, loser.color);
+            triggerAbsorbPulse(winner);
             winner.groups = winner.groups.concat(loser.groups);
             winner.count += loser.count;
             scene.remove(loser.mesh);
@@ -1123,6 +1175,8 @@ if (!canUseWebGL()) {
         if (player.count >= r.count) {
           spawnBurst(rivalCentroid.x, rivalCentroid.z, r.color);
           playAbsorbSound();
+          triggerAbsorbPulse(player);
+          if (r.count >= 6) triggerCameraShake(shakeMagnitudeForAbsorb(r.count));
           player.groups = player.groups.concat(r.groups);
           player.count += r.count;
           scene.remove(r.mesh);
@@ -1130,6 +1184,8 @@ if (!canUseWebGL()) {
           rivalCrowds.splice(i, 1);
         } else {
           spawnBurst(playerCentroid.x, playerCentroid.z, 0xff4d4d);
+          triggerAbsorbPulse(r);
+          if (player.count >= 6) triggerCameraShake(shakeMagnitudeForAbsorb(player.count));
           // Player's groups visually convert into the winning rival's
           // crowd instead of just vanishing — r keeps existing (not
           // removed/spliced) so it can keep rendering them merging in
@@ -1269,6 +1325,7 @@ if (!canUseWebGL()) {
   // — and a matching, slightly larger set into its outline companion
   // mesh (see makeOutlineMesh) at the same position/rotation.
   function renderCrowd(crowd) {
+    const pulse = absorbPulseScale(crowd);
     let renderIndex = 0;
     crowd.groups.forEach((group) => {
       for (let k = 0; k < group.size; k++) {
@@ -1283,11 +1340,11 @@ if (!canUseWebGL()) {
         );
         dummy.rotation.y = crowd.facing + lean + CHARACTER_FORWARD_OFFSET;
 
-        dummy.scale.setScalar(1);
+        dummy.scale.setScalar(pulse);
         dummy.updateMatrix();
         crowd.mesh.setMatrixAt(renderIndex, dummy.matrix);
 
-        dummy.scale.setScalar(OUTLINE_SCALE);
+        dummy.scale.setScalar(OUTLINE_SCALE * pulse);
         dummy.updateMatrix();
         crowd.outlineMesh.setMatrixAt(renderIndex, dummy.matrix);
 
@@ -1300,8 +1357,17 @@ if (!canUseWebGL()) {
     crowd.outlineMesh.instanceMatrix.needsUpdate = true;
   }
 
+  // Defeat/victory both pause normal play for a beat to show the final
+  // absorb settle in (see pendingDefeat/pendingVictory below) — slowing
+  // game time during that beat (rather than just pausing input) makes it
+  // read as a deliberate dramatic moment instead of a freeze. Real-world
+  // wall-clock length of the beat stretches accordingly, which is the
+  // point of slow motion.
+  const END_SEQUENCE_SLOWMO = 0.35;
+
   function animate() {
-    const delta = Math.min(clock.getDelta(), 0.1);
+    const slowMo = pendingDefeat || pendingVictory ? END_SEQUENCE_SLOWMO : 1;
+    const delta = Math.min(clock.getDelta(), 0.1) * slowMo;
     elapsedTime += delta;
 
     if (pendingDefeat) {
