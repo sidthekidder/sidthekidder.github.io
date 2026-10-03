@@ -82,6 +82,75 @@
     cursor: pointer;
   }
 
+  .score-submit {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .score-submit input {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 0.6rem 0.9rem;
+    font-family: inherit;
+    font-size: 0.95rem;
+    color: var(--fg);
+    width: 160px;
+  }
+  .score-submit button {
+    background: rgba(124, 252, 174, 0.15);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: 8px;
+    padding: 0.6rem 1.1rem;
+    font-family: inherit;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .score-submit button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .score-submit-status {
+    min-height: 1.2em;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .high-scores {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    min-width: 220px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .high-scores h3 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+  }
+  .high-scores ol {
+    list-style: none;
+    text-align: left;
+  }
+  .high-scores li {
+    display: flex;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 0.2rem 0;
+    font-size: 0.9rem;
+    color: var(--fg);
+  }
+  .high-scores li .rank {
+    color: var(--muted);
+    margin-right: 0.5rem;
+  }
+
   /* Virtual joystick — touch-only control, shown just for coarse
      (touch-primary) pointers so desktop/keyboard players never see it.
      Floats: game.js positions it via left/top on touch-down, anywhere
@@ -150,6 +219,15 @@
   <div class="end-screen" id="end-screen">
     <div class="end-title" id="end-title">Time's Up!</div>
     <div class="end-score" id="end-score">Final size: 0</div>
+    <div class="score-submit">
+      <input id="score-name-input" type="text" placeholder="Your name" maxlength="20">
+      <button id="submit-score-btn">Submit Score</button>
+    </div>
+    <div class="score-submit-status" id="score-submit-status"></div>
+    <div class="high-scores">
+      <h3>Global High Scores</h3>
+      <ol id="high-scores-list"></ol>
+    </div>
     <button class="end-button" id="play-again">Play Again</button>
   </div>
   <script type="module" src="game.js"></script>

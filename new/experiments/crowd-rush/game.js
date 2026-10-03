@@ -30,6 +30,22 @@ import {
   addGroupsAtPosition,
   removeCountFromGroups,
 } from './lib/pickups.js';
+// Firebase's own CDN build, not esm.sh — the modular SDK needs
+// firebase-app.js and firebase-firestore.js to share one internal
+// service registry, which only Firebase's own paired build guarantees;
+// a generic npm-to-ESM proxy can serve them as independently bundled
+// copies that don't see each other's registrations.
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  getDocs,
+  query,
+  orderBy,
+  limit,
+  serverTimestamp,
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 function canUseWebGL() {
   try {
@@ -64,6 +80,60 @@ if (!canUseWebGL()) {
 
   playAgainBtn.addEventListener('click', () => {
     window.location.reload();
+  });
+
+  // --- Global high scores ---
+  // Firestore (free Spark plan, no server of our own). This apiKey is the
+  // public client identifier Firebase expects to ship in client code —
+  // actual write protection is enforced server-side by Firestore
+  // Security Rules (reject bad shapes/out-of-range scores, no update or
+  // delete), not by keeping this value secret.
+  const firebaseConfig = {
+    apiKey: 'AIzaSyA8Fg0TJ6pMumXMxt6s2Nn8CLJ4l0-L8FY',
+    authDomain: 'crowdrush-1f668.firebaseapp.com',
+    projectId: 'crowdrush-1f668',
+    storageBucket: 'crowdrush-1f668.firebasestorage.app',
+    messagingSenderId: '576644056428',
+    appId: '1:576644056428:web:00779b80e733150b6b5f49',
+  };
+  const firestore = getFirestore(initializeApp(firebaseConfig));
+  const scoresCollection = collection(firestore, 'scores');
+  const HIGH_SCORE_COUNT = 10;
+  const HIGH_SCORE_NAME_KEY = 'crowdRushName';
+
+  const scoreNameInput = document.getElementById('score-name-input');
+  const submitScoreBtn = document.getElementById('submit-score-btn');
+  const scoreSubmitStatus = document.getElementById('score-submit-status');
+  const highScoresList = document.getElementById('high-scores-list');
+
+  scoreNameInput.value = localStorage.getItem(HIGH_SCORE_NAME_KEY) || '';
+
+  async function refreshHighScores() {
+    const q = query(scoresCollection, orderBy('score', 'desc'), limit(HIGH_SCORE_COUNT));
+    const snapshot = await getDocs(q);
+    highScoresList.innerHTML = snapshot.docs
+      .map((doc, i) => {
+        const data = doc.data();
+        return `<li><span><span class="rank">${i + 1}.</span>${data.name}</span><span>${data.score}</span></li>`;
+      })
+      .join('');
+  }
+  refreshHighScores().catch((err) => console.warn('Could not load high scores:', err));
+
+  submitScoreBtn.addEventListener('click', async () => {
+    const name = scoreNameInput.value.trim().slice(0, 20) || 'Anonymous';
+    localStorage.setItem(HIGH_SCORE_NAME_KEY, name);
+    submitScoreBtn.disabled = true;
+    scoreSubmitStatus.textContent = 'Submitting…';
+    try {
+      await addDoc(scoresCollection, { name, score: Math.round(player.count), ts: serverTimestamp() });
+      scoreSubmitStatus.textContent = 'Submitted!';
+      await refreshHighScores();
+    } catch (err) {
+      console.warn('Could not submit score:', err);
+      scoreSubmitStatus.textContent = 'Could not submit — try again?';
+      submitScoreBtn.disabled = false;
+    }
   });
 
   // --- Sound ---
