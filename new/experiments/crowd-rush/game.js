@@ -694,10 +694,10 @@ if (!canUseWebGL()) {
     });
   }
 
-  // --- Pickups: risk/reward orbs scattered on the roads. Collectible by
-  // any crowd (player or rival — a shared risk, not a player-only
-  // snowball), uniform odds across all 4 effects. Count is always
-  // clamped to a minimum of 1 so a bad pickup can't zero a crowd out.
+  // --- Pickups: risk/reward orbs scattered on the roads, collectible by
+  // the player only (see checkPickupCollisions below for why rivals
+  // don't collect them). Uniform odds across all 4 effects. Count is
+  // always clamped to a minimum of 1 so a bad pickup can't zero it out.
   // The effect math (scaledPickupDelta, apply*, pickupPercentText) and
   // the group add/remove mutation live in lib/pickups.js, unit-tested —
   // everything here is THREE.js/DOM presentation around that.
@@ -865,9 +865,13 @@ if (!canUseWebGL()) {
     }
   }
 
+  // Player-only: a rival's pickup-capture radius grows with its own size,
+  // so a rival that incidentally wanders into a few pickups early snowballs
+  // disproportionately (bigger rival -> bigger capture radius -> more
+  // pickups), producing an occasional rival far outside the intended size
+  // curve with no way for the player to see it coming or stop it.
   function checkPickupCollisions() {
     resolvePickupsForCrowd(player);
-    rivalCrowds.forEach((r) => resolvePickupsForCrowd(r));
   }
 
   // --- Camera follow ---
