@@ -964,11 +964,19 @@ if (!canUseWebGL()) {
     }
   }
 
+  function isTextInput(target) {
+    return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+  }
+
   window.addEventListener('keydown', (e) => {
+    if (isTextInput(e.target)) return;
     if (movementKeyCodes.has(e.code)) e.preventDefault();
     setKeyState(e.code, true);
   });
-  window.addEventListener('keyup', (e) => setKeyState(e.code, false));
+  window.addEventListener('keyup', (e) => {
+    if (isTextInput(e.target)) return;
+    setKeyState(e.code, false);
+  });
 
   function keyboardDirection() {
     let dx = 0;
