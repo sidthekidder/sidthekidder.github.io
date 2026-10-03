@@ -16,10 +16,20 @@ import {
   crowdRadius,
   buildingCollisionRadius,
   steerSpeedForDistance,
+  shakeMagnitudeForAbsorb,
 } from './lib/crowdMath.js';
 import { computeFormationSlot } from './lib/formation.js';
 import { buildSpatialHash as buildHash } from './lib/spatialHash.js';
 import { computeSeparation as computeSeparationForce } from './lib/separation.js';
+import {
+  applyAdd,
+  applySub,
+  applyMult,
+  applyDiv,
+  pickupPercentText as pickupPercentTextFor,
+  addGroupsAtPosition,
+  removeCountFromGroups,
+} from './lib/pickups.js';
 
 function canUseWebGL() {
   try {
@@ -149,13 +159,10 @@ if (!canUseWebGL()) {
 
   // --- Toon shading ---
   // Everything in the scene uses MeshToonMaterial (built into Three.js
-  // core, no shader code or extra CDN package needed) instead of
-  // MeshLambertMaterial, quantized against this hand-rolled 4-step
-  // gradient map so lighting reads as flat cartoon bands instead of a
-  // smooth gradient — this + low-poly geometry is the standard look for
-  // this genre of mobile game, chosen over photorealism (needs real PBR
-  // textures/HDRI we have no way to source here) specifically because it
-  // needs zero external assets, same as everything else on this page.
+  // core, no shader code or extra CDN package needed), quantized against
+  // this hand-rolled 4-step gradient map so lighting reads as flat
+  // cartoon bands — needs zero external assets, same as everything else
+  // on this page.
   function makeToonGradientTexture() {
     const canvas = document.createElement('canvas');
     canvas.width = 4;
@@ -283,8 +290,8 @@ if (!canUseWebGL()) {
 
   // --- Crowd character models ---
   // Real low-poly character models — CC0, Kenney "Mini Characters" pack,
-  // see assets/characters/License.txt — instead of a plain capsule.
-  // These are rigged/animated source files, but this game has no
+  // see assets/characters/License.txt. These are rigged/animated source
+  // files, but this game has no
   // per-instance skeletal animation (everything is one InstancedMesh per
   // crowd driven by our own steering/separation math, not bones), so
   // loadCharacterAsset below extracts just the bind-pose mesh data —
@@ -414,8 +421,8 @@ if (!canUseWebGL()) {
     });
   }
 
-  // Small fixed offsets so a GROUP_SIZE cluster still reads as a few
-  // separate people huddled together rather than one fat capsule.
+  // Small fixed offsets so a GROUP_SIZE cluster reads as a few separate
+  // people huddled together.
   const GROUP_OFFSETS = [
     { x: 0, z: 0 },
     { x: 0.22, z: 0.1 },
@@ -605,23 +612,15 @@ if (!canUseWebGL()) {
   // any crowd (player or rival — a shared risk, not a player-only
   // snowball), uniform odds across all 4 effects. Count is always
   // clamped to a minimum of 1 so a bad pickup can't zero a crowd out.
-
-  // A flat +/-10 is a huge swing on a crowd of 15 but noise on a crowd of
-  // 200, so the flat types scale by bucket instead of a fixed amount —
-  // the multiplier types (1.5x / 1.5÷) don't need this, a percentage is
-  // already proportional at any size.
-  function scaledPickupDelta(count) {
-    if (count < 30) return 10;
-    if (count < 80) return 20;
-    if (count < 200) return 40;
-    return 80;
-  }
+  // The effect math (scaledPickupDelta, apply*, pickupPercentText) and
+  // the group add/remove mutation live in lib/pickups.js, unit-tested —
+  // everything here is THREE.js/DOM presentation around that.
 
   const PICKUP_TYPES = [
-    { key: 'add', color: 0x4ade80, apply: (count) => count + scaledPickupDelta(count) },
-    { key: 'sub', color: 0xef4444, apply: (count) => count - scaledPickupDelta(count) },
-    { key: 'mult', color: 0xf5c518, apply: (count) => Math.round(count * 1.5) },
-    { key: 'div', color: 0xa855f7, apply: (count) => Math.round(count / 1.5) },
+    { key: 'add', color: 0x4ade80, apply: applyAdd },
+    { key: 'sub', color: 0xef4444, apply: applySub },
+    { key: 'mult', color: 0xf5c518, apply: applyMult },
+    { key: 'div', color: 0xa855f7, apply: applyDiv },
   ];
   const PICKUP_COUNT = 7;
   const PICKUP_RADIUS = 0.9;
@@ -633,14 +632,8 @@ if (!canUseWebGL()) {
   const pickupRespawnTimers = [];
   let pickupLabelRefreshTimer = 0;
 
-  // Percentage this type's effect represents right now, relative to
-  // `referenceCount` — shown on the pickup's label instead of a raw
-  // number so it reads the same way regardless of the flat types'
-  // current bucket.
   function pickupPercentText(type, referenceCount) {
-    const after = Math.max(1, type.apply(referenceCount));
-    const pct = Math.round(((after - referenceCount) / referenceCount) * 100);
-    return `${pct >= 0 ? '+' : ''}${pct}%`;
+    return pickupPercentTextFor(type.apply, referenceCount);
   }
 
   // A small always-camera-facing canvas-texture sprite.
@@ -758,40 +751,6 @@ if (!canUseWebGL()) {
     }
   }
 
-  // Adds `amount` worth of new individuals (as GROUP_SIZE-sized groups,
-  // same as initial spawning) near (x, z) so a crowd that just grew from
-  // a pickup visibly gains that many rendered soldiers, not just a
-  // bigger HUD number.
-  function addGroupsAtPosition(groups, amount, x, z) {
-    let placed = 0;
-    while (placed < amount) {
-      const size = Math.min(GROUP_SIZE, amount - placed);
-      groups.push({
-        position: { x: x + (Math.random() - 0.5) * 0.6, z: z + (Math.random() - 0.5) * 0.6 },
-        velocity: { x: 0, z: 0 },
-        size,
-      });
-      placed += size;
-    }
-  }
-
-  // Removes `amount` worth of individuals from the end of `groups`
-  // (shrinking/popping groups as needed) so a shrinking crowd visibly
-  // loses that many rendered soldiers.
-  function removeCountFromGroups(groups, amount) {
-    let remaining = amount;
-    while (remaining > 0 && groups.length > 0) {
-      const last = groups[groups.length - 1];
-      if (last.size <= remaining) {
-        remaining -= last.size;
-        groups.pop();
-      } else {
-        last.size -= remaining;
-        remaining = 0;
-      }
-    }
-  }
-
   const pickupCollisionCentroidScratch = { x: 0, z: 0 };
 
   function resolvePickupsForCrowd(crowd) {
@@ -805,7 +764,7 @@ if (!canUseWebGL()) {
         crowd.count = newCount;
         const delta = newCount - oldCount;
         if (delta > 0) {
-          addGroupsAtPosition(crowd.groups, delta, p.x, p.z);
+          addGroupsAtPosition(crowd.groups, delta, p.x, p.z, GROUP_SIZE);
         } else if (delta < 0) {
           removeCountFromGroups(crowd.groups, -delta);
         }
@@ -851,8 +810,8 @@ if (!canUseWebGL()) {
 
   // A brief decaying random jitter on top of the normal camera position,
   // for impact on big absorptions. `magnitude` scales with how big the
-  // steal was (see shakeMagnitudeForAbsorb), and decays linearly to 0
-  // over CAMERA_SHAKE_DURATION.
+  // steal was (see lib/crowdMath.js's shakeMagnitudeForAbsorb), and
+  // decays linearly to 0 over CAMERA_SHAKE_DURATION.
   const CAMERA_SHAKE_DURATION = 0.3;
   let cameraShakeTimer = 0;
   let cameraShakeMagnitude = 0;
@@ -860,10 +819,6 @@ if (!canUseWebGL()) {
   function triggerCameraShake(magnitude) {
     cameraShakeTimer = CAMERA_SHAKE_DURATION;
     cameraShakeMagnitude = magnitude;
-  }
-
-  function shakeMagnitudeForAbsorb(absorbedCount) {
-    return Math.min(0.9, absorbedCount * 0.03);
   }
 
   // `target` defaults to the player — but during the defeat sequence
@@ -1358,11 +1313,9 @@ if (!canUseWebGL()) {
   }
 
   // Defeat/victory both pause normal play for a beat to show the final
-  // absorb settle in (see pendingDefeat/pendingVictory below) — slowing
-  // game time during that beat (rather than just pausing input) makes it
-  // read as a deliberate dramatic moment instead of a freeze. Real-world
-  // wall-clock length of the beat stretches accordingly, which is the
-  // point of slow motion.
+  // absorb settle in (see pendingDefeat/pendingVictory below), running at
+  // this fraction of normal speed for a deliberate dramatic effect — the
+  // beat's real-world wall-clock length stretches accordingly.
   const END_SEQUENCE_SLOWMO = 0.35;
 
   function animate() {

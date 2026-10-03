@@ -3,6 +3,7 @@ import {
   crowdRadius,
   buildingCollisionRadius,
   steerSpeedForDistance,
+  shakeMagnitudeForAbsorb,
   BASE_STEER_SPEED,
   CATCHUP_START,
   CATCHUP_MAX_SPEED,
@@ -49,6 +50,11 @@ test('steerSpeedForDistance is monotonically non-decreasing', () => {
     assertTrue(speed >= previous, `speed dropped at dist=${dist}`);
     previous = speed;
   }
+});
+
+test('shakeMagnitudeForAbsorb grows with absorbed size, up to its cap', () => {
+  assertTrue(shakeMagnitudeForAbsorb(10) > shakeMagnitudeForAbsorb(5));
+  assertClose(shakeMagnitudeForAbsorb(1000), 0.9);
 });
 
 summary();

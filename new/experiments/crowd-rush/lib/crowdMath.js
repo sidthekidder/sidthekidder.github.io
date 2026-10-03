@@ -34,3 +34,8 @@ export function steerSpeedForDistance(dist) {
     BASE_STEER_SPEED + (dist - CATCHUP_START) * CATCHUP_RATE
   );
 }
+
+/** Camera shake strength for absorbing a crowd of `absorbedCount`, capped so huge absorptions don't over-shake. */
+export function shakeMagnitudeForAbsorb(absorbedCount) {
+  return Math.min(0.9, absorbedCount * 0.03);
+}
