@@ -99,6 +99,11 @@ if (!canUseWebGL()) {
   const firestore = getFirestore(initializeApp(firebaseConfig));
   const scoresCollection = collection(firestore, 'scores');
   const HIGH_SCORE_COUNT = 10;
+  // Every submission is kept in Firestore (the rules are append-only, no
+  // updates/deletes, to keep the security model simple), so the same
+  // name can have many entries — fetch more candidates than we need and
+  // keep only each name's best one when displaying.
+  const HIGH_SCORE_FETCH_COUNT = 50;
   const HIGH_SCORE_NAME_KEY = 'crowdRushName';
 
   const scoreNameInput = document.getElementById('score-name-input');
@@ -108,14 +113,25 @@ if (!canUseWebGL()) {
 
   scoreNameInput.value = localStorage.getItem(HIGH_SCORE_NAME_KEY) || '';
 
+  function dedupeByName(docsData) {
+    const seen = new Set();
+    const result = [];
+    for (const data of docsData) {
+      const key = data.name.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(data);
+      if (result.length >= HIGH_SCORE_COUNT) break;
+    }
+    return result;
+  }
+
   async function refreshHighScores() {
-    const q = query(scoresCollection, orderBy('score', 'desc'), limit(HIGH_SCORE_COUNT));
+    const q = query(scoresCollection, orderBy('score', 'desc'), limit(HIGH_SCORE_FETCH_COUNT));
     const snapshot = await getDocs(q);
-    highScoresList.innerHTML = snapshot.docs
-      .map((doc, i) => {
-        const data = doc.data();
-        return `<li><span><span class="rank">${i + 1}.</span>${data.name}</span><span>${data.score}</span></li>`;
-      })
+    const topScores = dedupeByName(snapshot.docs.map((doc) => doc.data()));
+    highScoresList.innerHTML = topScores
+      .map((data, i) => `<li><span><span class="rank">${i + 1}.</span>${data.name}</span><span>${data.score}</span></li>`)
       .join('');
   }
   refreshHighScores().catch((err) => console.warn('Could not load high scores:', err));
