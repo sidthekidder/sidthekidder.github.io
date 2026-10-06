@@ -3,6 +3,6 @@ layout: project
 name: Cobotix RoboSyn
 proj_url: https://github.com/sidthekidder/cobotix-robosyn
 img_url: /images/projects/cobotix_robosyn.png
-description: RoboSynChallenge competition workspace
+description: Geometry-supervised ACT imitation learning for a robotic manipulation policy competition
 type: misc
 ---
