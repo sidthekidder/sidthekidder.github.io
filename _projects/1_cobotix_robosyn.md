@@ -1,8 +1,8 @@
 ---
 layout: project
-name: Cobotix RoboSyn
+name: Cobotix Labs
 proj_url: https://github.com/sidthekidder/cobotix-robosyn
 img_url: /images/projects/cobotix_robosyn.png
-description: Robotic manipulation policy competition
+description: 'RoboSynChallenge: Robotic manipulation competition workspace'
 type: misc
 ---
